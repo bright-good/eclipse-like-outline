@@ -2,7 +2,7 @@
   "name": "eclipse-like-outline",
   "displayName": "アウトライン (Eclipse)",
   "description": "Java のアウトラインを Eclipse と同じアイコンで表示する",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "bright-good",
   "private": true,
   "repository": {
@@ -14,7 +14,8 @@
   },
   "main": "extension.js",
   "activationEvents": [
-    "onView:eclipseLikeOutline"
+    "onView:eclipseLikeOutline",
+    "onStartupFinished"
   ],
   "contributes": {
     "viewsContainers": {
