@@ -2,7 +2,7 @@
   "name": "eclipse-like-outline",
   "displayName": "アウトライン (Eclipse)",
   "description": "Java のアウトラインを Eclipse と同じアイコンで表示する",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "bright-good",
   "private": true,
   "repository": {
