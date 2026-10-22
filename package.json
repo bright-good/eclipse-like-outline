@@ -2,7 +2,7 @@
   "name": "eclipse-like-outline",
   "displayName": "アウトライン (Eclipse)",
   "description": "Java のアウトラインを Eclipse と同じアイコンで表示する",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "bright-good",
   "private": true,
   "repository": {
@@ -10,7 +10,7 @@
     "url": "https://github.com/bright-good/eclipse-like-outline"
   },
   "engines": {
-    "vscode": "^1.135.0"
+    "vscode": "^1.140.0"
   },
   "main": "extension.js",
   "activationEvents": [
@@ -34,6 +34,159 @@
           "name": "アウトライン (Eclipse)"
         }
       ]
-    }
+    },
+    "commands": [
+      {
+        "command": "eclipseLikeOutline.collapseAll",
+        "title": "すべて折りたたんで表示します。",
+        "icon": "$(collapse-all)"
+      },
+      {
+        "command": "eclipseLikeOutline.expandAll",
+        "title": "すべて展開",
+        "icon": "$(expand-all)"
+      },
+      {
+        "command": "eclipseLikeOutline.followCursor",
+        "title": "カーソルに追従"
+      },
+      {
+        "command": "eclipseLikeOutline.followCursor.checked",
+        "title": "✓ カーソルに追従"
+      },
+      {
+        "command": "eclipseLikeOutline.sortByPosition",
+        "title": "並べ替え: 位置"
+      },
+      {
+        "command": "eclipseLikeOutline.sortByPosition.checked",
+        "title": "✓ 並べ替え: 位置"
+      },
+      {
+        "command": "eclipseLikeOutline.sortByName",
+        "title": "並べ替え: 名前"
+      },
+      {
+        "command": "eclipseLikeOutline.sortByName.checked",
+        "title": "✓ 並べ替え: 名前"
+      },
+      {
+        "command": "eclipseLikeOutline.sortByKind",
+        "title": "並べ替えの基準: カテゴリ"
+      },
+      {
+        "command": "eclipseLikeOutline.sortByKind.checked",
+        "title": "✓ 並べ替えの基準: カテゴリ"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "eclipseLikeOutline.collapseAll",
+          "when": "view == eclipseLikeOutline && !eclipseLikeOutline.allCollapsed",
+          "group": "navigation"
+        },
+        {
+          "command": "eclipseLikeOutline.expandAll",
+          "when": "view == eclipseLikeOutline && eclipseLikeOutline.allCollapsed",
+          "group": "navigation"
+        },
+        {
+          "command": "eclipseLikeOutline.followCursor",
+          "when": "view == eclipseLikeOutline && !eclipseLikeOutline.followsCursor",
+          "group": "config@1"
+        },
+        {
+          "command": "eclipseLikeOutline.followCursor.checked",
+          "when": "view == eclipseLikeOutline && eclipseLikeOutline.followsCursor",
+          "group": "config@1"
+        },
+        {
+          "command": "eclipseLikeOutline.sortByPosition",
+          "when": "view == eclipseLikeOutline && (eclipseLikeOutline.sortMode == 'name' || eclipseLikeOutline.sortMode == 'kind')",
+          "group": "sort@1"
+        },
+        {
+          "command": "eclipseLikeOutline.sortByPosition.checked",
+          "when": "view == eclipseLikeOutline && eclipseLikeOutline.sortMode != 'name' && eclipseLikeOutline.sortMode != 'kind'",
+          "group": "sort@1"
+        },
+        {
+          "command": "eclipseLikeOutline.sortByName",
+          "when": "view == eclipseLikeOutline && eclipseLikeOutline.sortMode != 'name'",
+          "group": "sort@2"
+        },
+        {
+          "command": "eclipseLikeOutline.sortByName.checked",
+          "when": "view == eclipseLikeOutline && eclipseLikeOutline.sortMode == 'name'",
+          "group": "sort@2"
+        },
+        {
+          "command": "eclipseLikeOutline.sortByKind",
+          "when": "view == eclipseLikeOutline && eclipseLikeOutline.sortMode != 'kind'",
+          "group": "sort@3"
+        },
+        {
+          "command": "eclipseLikeOutline.sortByKind.checked",
+          "when": "view == eclipseLikeOutline && eclipseLikeOutline.sortMode == 'kind'",
+          "group": "sort@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "eclipseLikeOutline.collapseAll",
+          "when": "false"
+        },
+        {
+          "command": "eclipseLikeOutline.expandAll",
+          "when": "false"
+        },
+        {
+          "command": "eclipseLikeOutline.followCursor",
+          "when": "false"
+        },
+        {
+          "command": "eclipseLikeOutline.followCursor.checked",
+          "when": "false"
+        },
+        {
+          "command": "eclipseLikeOutline.sortByPosition",
+          "when": "false"
+        },
+        {
+          "command": "eclipseLikeOutline.sortByPosition.checked",
+          "when": "false"
+        },
+        {
+          "command": "eclipseLikeOutline.sortByName",
+          "when": "false"
+        },
+        {
+          "command": "eclipseLikeOutline.sortByName.checked",
+          "when": "false"
+        },
+        {
+          "command": "eclipseLikeOutline.sortByKind",
+          "when": "false"
+        },
+        {
+          "command": "eclipseLikeOutline.sortByKind.checked",
+          "when": "false"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "key": "enter",
+        "command": "eclipseLikeOutline.selectByKey",
+        "when": "focusedView == 'eclipseLikeOutline' && listFocus && !inputFocus && !treestickyScrollFocused"
+      },
+      {
+        "key": "",
+        "mac": "cmd+down",
+        "command": "eclipseLikeOutline.selectByKey",
+        "when": "focusedView == 'eclipseLikeOutline' && listFocus && !inputFocus && !treestickyScrollFocused"
+      }
+    ]
   }
 }
