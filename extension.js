@@ -5,6 +5,7 @@
 'use strict';
 
 const vscode = require('vscode');
+const fs = require('fs');
 const path = require('path');
 
 const VIEW_ID = 'eclipseLikeOutline';
@@ -121,7 +122,7 @@ function fromInternal(list) {
 // 行の id は「ファイルの場所|Outer/run()」の形。ファイルの場所は0.3.0版で入れた（中身が同じ別のファイルの行と、開閉状態を分けるため）
 function toSymbols(list, parent, uri = parent && parent.uri) {
   const seen = new Map();
-  return (list || []).map((x) => {
+  const out = (list || []).map((x) => {
     // 同じ名前の兄弟（匿名クラスなど）があっても id が重ならないよう、出てきた順の番号を付ける
     const n = seen.get(x.name) || 0;
     seen.set(x.name, n + 1);
@@ -140,6 +141,15 @@ function toSymbols(list, parent, uri = parent && parent.uri) {
     sym.children = toSymbols(x.children, sym);
     return sym;
   });
+  // 範囲が同じ、前の兄弟の行の数（int a = x1, b = x2; の b は1）。行の場所を分けるのに使う（0.4.0版のチケット30）
+  const same = new Map();
+  out.forEach((sym) => {
+    const r = sym.range;
+    const key = `${r.start.line},${r.start.character},${r.end.line},${r.end.character}`;
+    sym.dup = same.get(key) || 0;
+    same.set(key, sym.dup + 1);
+  });
+  return out;
 }
 
 // カーソルの位置 pos を含む、いちばん内側のシンボル（なければ null。0.3.0版）。VS Code 標準のアウトラインと同じく、範囲の端も含め、
@@ -464,21 +474,39 @@ const DARK_COLORS = {
   '#2a6aa3': '#5d9ee0', // アノテーション型の @
   '#5d93c8': '#8cc0f2', '#1f5f9e': '#4a8ad0', '#1f63a2': '#7ab4ec', // package の三角（メソッドの図の塗りと縁、型アイコンの右下の縁）
   '#3a78b4': '#5d9ee0', '#2468a6': '#7ab4ec', // package の三角（フィールドの図と、型アイコンの右下の塗り）
+  '#1365a5': '#6aa7e6', // 情報のエラー・警告アイコンの i（0.4.0版）
+};
+
+// エラー・警告アイコン（0.4.0版のチケット33）：[描く図, 下の図を切り抜く形]。Eclipse の error_co（赤い四角に白い ×）・warning_co（黄色い三角に !）・
+// info_co（青い i）を、1画素ずつ写したもの（7×8）。Eclipse が白で塗るところ（警告の三角のまわり、情報の i の後ろ）は、白で塗らずに切り抜く。
+// エラーの白い × は図そのものなので白のまま（2026-10-27 にユーザーが、画像を見て決めた）
+const PROBLEM_OVERLAYS = {
+  error: ['<rect width="7" height="8" fill="#d8424f"/><path d="M1 2h2v1H1zM4 2h2v1H4zM1 5h2v1H1zM4 5h2v1H4z" fill="#fff"/><path d="M2 3h3v2H2z" fill="#f6d3d6"/>', '<rect width="7" height="8"/>'],
+  warning: ['<path d="M2.5 .5h2l2 6.5v.5H.5V7Z" fill="#f8d880" stroke="#c7862f" stroke-linejoin="round"/><path d="M3.5 2v4" stroke="#502800"/>', '<path d="M2 -1h3l3 7v2H-1v-2Z"/>'],
+  info: ['<path d="M3 1h1v1H3zM2 3h2v4h1v1H2V7h1V4H2Z" fill="#1365a5"/>', '<path d="M2 0h3v1h1v7H1V1h1Z"/>'],
 };
 
 // mask の黒いところで、図を切り抜く
 const cutOut = (id, cuts, body) => (cuts ? `<mask id="${id}"><rect width="16" height="16" fill="#fff"/>${cuts}</mask><g mask="url(#${id})">${body}</g>` : body);
 
 // 行のアイコンの部品（javaIcon の結果）から SVG を作る。dark はダーク テーマ用の図か。
-// 修飾子アイコンは、16pxの右端から左へ並べる。左端を越えるものは描かず、次のものを試す（Eclipse の JavaElementImageDescriptor と同じ）
+// 修飾子アイコンは、16pxの右端から左へ並べる。左端を越えるものは描かず、次のものを試す（Eclipse の JavaElementImageDescriptor と同じ）。
+// problem（0.4.0版）があれば、エラー・警告アイコンを、Eclipse と同じく左下（x=0、y=8）に重ねる。そのとき、メソッドとフィールドの図は、
+// Eclipse と同じ位置（3px 右）に戻す（重なり方を Eclipse と同じにするため。2026-10-27 にユーザーが案C を選んだ）
 function iconSvg(icon, dark = false) {
   const member = icon.base === 'method' || icon.base === 'field';
   const [shape, holes] = member ? MEMBER_SHAPES[icon.base][icon.vis] : [icon.base === 'package' ? PACKAGE_SHAPE : TYPE_SHAPES[icon.base], ''];
   const [mark, rim] = !member && icon.corner ? TYPE_CORNERS[icon.corner] : ['', ''];
   // 土台（非推奨の斜線を含む）は、フィールドの図の中と、右下の可視性の縁で切り抜く
-  const base = cutOut('h', holes + rim, (icon.deprecated ? DEPRECATED[member ? 'member' : 'type'] : '') + shape) + mark;
+  let base = cutOut('h', holes + rim, (icon.deprecated ? DEPRECATED[member ? 'member' : 'type'] : '') + shape) + mark;
   let boxes = '';
   let overlays = '';
+  if (icon.problem) {
+    const [draw, cut] = PROBLEM_OVERLAYS[icon.problem];
+    if (member) base = `<g transform="translate(3 0)">${base}</g>`;
+    boxes += `<g transform="translate(0 8)">${cut}</g>`;
+    overlays += `<g transform="translate(0 8)">${draw}</g>`;
+  }
   for (const [names, top] of [[icon.tr, true], [icon.br, false]]) {
     let right = 16;
     for (const name of names) {
@@ -617,8 +645,8 @@ class OutlineProvider {
     // （VS Code 標準のアウトラインと同じ）
     item.command = { command: SELECT_COMMAND, title: '', arguments: [sym.uri, sym.selectionRange.start, sym.range, sym.id] };
     // 行をドラッグすると、VS Code がこの場所から、ドラッグの出来事に入れる中身（エディターで開く中身、ファイルの一覧など）を作る。
-    // チャットとターミナルは、その中身を読む（0.3.0版）
-    item.resourceUri = rangeUri(sym);
+    // チャットとターミナルは、その中身を読む（0.3.0版）。エラー・警告の色とバッジ（ファイルの装飾）も、この場所に付く（0.4.0版）
+    item.resourceUri = sym.place || rangeUri(sym);
     return item;
   }
 }
@@ -639,6 +667,347 @@ const DRAG_AND_DROP = {
     dataTransfer.set('text/uri-list', new vscode.DataTransferItem(rows.map((sym) => rangeUri(sym).toString()).join('\r\n')));
   },
 };
+
+// --- エラー・警告（0.4.0版のチケット30〜32） ---
+// VS Code 標準のアウトラインと同じく、行ごとに、範囲と交わるエラー・警告（問題）を数え、名前の色とバッジ（件数か点）で出す。
+// 拡張機能が行に色とバッジを付ける方法は、ファイルの装飾（FileDecoration）しかないので、行の場所（resourceUri）に付ける。
+// 数える問題の位置は、VS Code 標準のアウトラインと同じく、エディターが持つ、編集に合わせて動く位置（1.140.0版の本体のプログラムの
+// MarkerDecorationsService）。拡張機能には問題が出たときの位置しか届かないので、同じ決まりで動かした位置を持つ（ProblemPositions）
+
+// VS Code の内部の問題の重さ（MarkerSeverity）。vscode.DiagnosticSeverity（エラー、警告、情報、ヒントの順に0〜3）から引く
+const SEVERITY = { error: 8, warning: 4, info: 2, hint: 1 };
+const MARKER_SEVERITY = [SEVERITY.error, SEVERITY.warning, SEVERITY.info, SEVERITY.hint];
+const MARKER_TAKE = 500; // エディターが持つ問題の数（ファイルの問題の最初の500個）
+const DECORATION_EVENT_SIZE = 250; // 装飾が替わった知らせ1回に入れられる場所の数（超えると、VS Code がフォルダーごとに1つに減らす）
+const DECORATION_WAIT = 300; // 新しい場所の装飾を、VS Code が問い合わせてくるのを待つ、いちばん長い時間（ms）
+const DECORATION_LIMIT = 10000; // VS Code に覚えさせる場所の数。超えたら、次に行を出すときに、全部捨てさせる
+const PROBLEM_DOT = '●'; // 問題がすべて子の行にある行のバッジ（VS Code 標準のアウトラインの点の代わり。2026-10-27 にユーザーが決めた）
+
+// --- 単語の決まり ---
+// 範囲が空の問題は、VS Code がその位置の単語に広げる。単語の決まりは、言語の設定（language-configuration.json の wordPattern）にある。
+// 拡張機能には、ほかの拡張機能の言語の設定が届かないので、拡張機能の package.json から探して読む
+
+// VS Code の既定の単語の決まり（DEFAULT_WORD_REGEXP）
+const DEFAULT_WORD = /(-?\d*\.\d\w*)|([^`~!@#$%^&*()\-=+[{\]}\\|;:'",.<>/?\s]+)/g;
+
+// コメントと末尾のカンマを含む JSON（language-configuration.json の書き方）を読む
+function parseJsonc(text) {
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j;
+    } else if (c === '/' && text[i + 1] === '/') {
+      while (i + 1 < text.length && text[i + 1] !== '\n') i++;
+    } else if (c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      i = end < 0 ? text.length : end + 1;
+    } else if (c === ',' && /^\s*[}\]]/.test(text.slice(i + 1))) {
+      // 末尾のカンマは読み飛ばす
+    } else {
+      out += c;
+    }
+  }
+  return JSON.parse(out);
+}
+
+// 言語ごとの単語の決まり。VS Code と同じく、言語の設定を登録した順で、最後に wordPattern を書いたものを使う。
+// g の付いていない決まりは、VS Code と同じく、g と i・m・u だけを付けて作り直す（ensureValidWordDefinition）
+const wordPatterns = new Map();
+function wordPattern(languageId) {
+  if (wordPatterns.has(languageId)) return wordPatterns.get(languageId);
+  let found = null;
+  for (const ext of vscode.extensions.all) {
+    const languages = (ext.packageJSON && ext.packageJSON.contributes && ext.packageJSON.contributes.languages) || [];
+    for (const lang of languages) {
+      if (lang.id !== languageId || typeof lang.configuration !== 'string') continue;
+      try {
+        const w = parseJsonc(fs.readFileSync(path.join(ext.extensionPath, lang.configuration), 'utf8')).wordPattern;
+        if (typeof w === 'string') found = new RegExp(w);
+        else if (w && typeof w.pattern === 'string') found = new RegExp(w.pattern, w.flags);
+      } catch {
+        // 読めない言語の設定と、正しくない wordPattern は使わない（VS Code も使わない）
+      }
+    }
+  }
+  const re = !found ? DEFAULT_WORD : found.global ? found : new RegExp(found.source, 'g' + ['i', 'm', 'u'].filter((f) => found.flags.includes(f)).join(''));
+  wordPatterns.set(languageId, re);
+  return re;
+}
+
+// 行 text の、0から数えた桁 column を含む単語の [始まり, 終わり]（なければ null）。VS Code の getWordAtText と同じく、
+// 1000文字より長い行は、桁の前後500文字だけを見る
+function wordAt(text, column, re) {
+  let offset = 0;
+  if (text.length > 1000) {
+    offset = Math.max(0, column - 500);
+    text = text.slice(offset, column + 500);
+  }
+  const pos = column - offset;
+  re.lastIndex = 0;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m.index <= pos && pos <= re.lastIndex) return [offset + m.index, offset + re.lastIndex];
+    if (m.index > pos) return null;
+    if (m[0].length === 0) re.lastIndex++;
+  }
+  return null;
+}
+
+// --- 問題の位置 ---
+
+// 行の、最初と最後の空白でない文字の位置（空白はスペースとタブだけ。VS Code の firstNonWhitespaceIndex と lastNonWhitespaceIndex）
+const firstNonBlank = (text) => text.search(/[^ \t]/);
+function lastNonBlank(text) {
+  let i = text.length - 1;
+  while (i >= 0 && (text[i] === ' ' || text[i] === '\t')) i--;
+  return i;
+}
+
+// 問題 d（vscode.Diagnostic）の範囲を、エディターが持つ範囲に直す（1.140.0版の MarkerDecorationsService の _createDecorationRange と同じ）。
+// doc はそのときのファイル。ファイルの外はファイルの中に収める。範囲が空なら、単語の中ではその単語に広げる（行の終わりと空行ではそのまま）。
+// 行全体の問題（桁の終わりが Number.MAX_VALUE）は、行の最初の空白でない文字から始める
+function markerRange(doc, d) {
+  const last = doc.lineCount - 1;
+  const valid = (p) => (p.line > last ? new vscode.Position(last, doc.lineAt(last).text.length)
+    : new vscode.Position(p.line, Math.min(p.character, doc.lineAt(p.line).text.length)));
+  let start = valid(d.range.start);
+  let end = valid(d.range.end);
+  // ヒントは、始まりから2文字にする（不要なコードと非推奨の印が付いたものを除く）
+  if (d.severity === vscode.DiagnosticSeverity.Hint && !(d.tags && d.tags.length)) end = valid(new vscode.Position(start.line, start.character + 2));
+  const text = doc.lineAt(start.line).text;
+  if (start.isEqual(end)) {
+    const blankEnd = lastNonBlank(text) + 1 || text.length; // 最後の空白でない文字の後ろ（すべて空白なら行の終わり）
+    if (text.length === 0 || end.character >= blankEnd) return new vscode.Range(start, end);
+    const word = wordAt(text, start.character, wordPattern(doc.languageId));
+    return word ? new vscode.Range(start.line, word[0], start.line, word[1]) : new vscode.Range(start, end);
+  }
+  if (d.range.start.character === 0 && d.range.end.character + 1 === Number.MAX_VALUE && start.line === end.line) {
+    const first = firstNonBlank(text);
+    if (first >= 0 && first < end.character) start = new vscode.Position(start.line, first);
+  }
+  return new vscode.Range(start, end);
+}
+
+// 範囲の端を、1回の書き換え（start〜end の文字を、inserted 文字に替える。位置はファイルの頭からの文字数）に合わせて動かす。
+// 1.140.0版の本体のプログラムの intervalTree の nodeAcceptEdit で、stickiness が NeverGrowsWhenTypingAtEdges（問題の飾りの決まり）のときと同じ：
+// 範囲の端に打った文字は範囲に入れない。範囲を含む文字を消すと、消した場所の1点になる
+function acceptEdit(m, start, end, inserted) {
+  // offset が check の位置で動かないか。stick は前の文字にくっつくか（範囲の終わりだけ）。how は 'stay'（動かない）か 'defined'（stick で決める）
+  const stays = (offset, stick, check, how) => (offset < check ? true : offset > check ? false : how === 'stay' ? true : stick);
+  const deleted = end - start;
+  const common = Math.min(deleted, inserted);
+  const s = m.start;
+  const e = m.end;
+  let sDone = false;
+  let eDone = false;
+  const first = deleted > 0 ? 'stay' : 'defined';
+  if (stays(s, false, start, first)) sDone = true;
+  if (stays(e, true, start, first)) eDone = true;
+  if (common > 0) {
+    const how = deleted > inserted ? 'stay' : 'defined';
+    if (!sDone && stays(s, false, start + common, how)) sDone = true;
+    if (!eDone && stays(e, true, start + common, how)) eDone = true;
+  }
+  if (!sDone && stays(s, false, end, 'defined')) {
+    m.start = start + inserted;
+    sDone = true;
+  }
+  if (!eDone && stays(e, true, end, 'defined')) {
+    m.end = start + inserted;
+    eDone = true;
+  }
+  const delta = inserted - deleted;
+  if (!sDone) m.start = Math.max(0, s + delta);
+  if (!eDone) m.end = Math.max(0, e + delta);
+  if (m.start > m.end) m.end = m.start;
+}
+
+// 開いているファイルごとの、エディターが持つ問題の位置。VS Code と同じく、問題が出たとき（ファイルを開いたときも）に、そのときのファイルの中の
+// 範囲に直して置き、そのあとは編集に合わせて動かす。提供元が問題を出し直すと、VS Code はその提供元の問題だけを置き直す（問題のオブジェクトで
+// 見分ける）。拡張機能には、どの提供元が出し直したかは届かないが、出し直した問題は vscode.Diagnostic のオブジェクトが替わるので、
+// 同じオブジェクトなら前の位置を引き継ぐ
+class ProblemPositions {
+  constructor() {
+    this.files = new Map(); // ファイルの場所 → [{ diagnostic, start, end, severity }]（位置はファイルの頭からの文字数）
+  }
+
+  // ファイルの問題を持ち直す。VS Code と同じく、文言のある問題の最初の500個（どの重さも数える）
+  reset(doc) {
+    const before = new Map((this.files.get(String(doc.uri)) || []).map((m) => [m.diagnostic, m]));
+    const list = vscode.languages.getDiagnostics(doc.uri).filter((d) => d.message).slice(0, MARKER_TAKE);
+    this.files.set(String(doc.uri), list.map((d) => {
+      if (before.has(d)) return before.get(d);
+      const r = markerRange(doc, d);
+      return { diagnostic: d, start: doc.offsetAt(r.start), end: doc.offsetAt(r.end), severity: MARKER_SEVERITY[d.severity] };
+    }));
+  }
+
+  // 編集に合わせて動かす。contentChanges は、どれも編集前のファイルの位置で書かれていて、後ろの変更から順に並んでいる
+  edit(e) {
+    const list = this.files.get(String(e.document.uri));
+    if (!list) return;
+    for (const c of e.contentChanges) for (const m of list) acceptEdit(m, c.rangeOffset, c.rangeOffset + c.rangeLength, c.text.length);
+  }
+
+  forget(doc) {
+    this.files.delete(String(doc.uri));
+  }
+
+  // ファイルの問題を、いまの範囲（vscode.Range）と重さで返す。まだ持っていなければ、いま届いている問題で持つ
+  get(doc) {
+    if (!this.files.has(String(doc.uri))) this.reset(doc);
+    return this.files.get(String(doc.uri)).map((m) => ({ range: new vscode.Range(doc.positionAt(m.start), doc.positionAt(m.end)), severity: m.severity }));
+  }
+}
+
+// --- 行への割り当て ---
+
+// 範囲が交わるか（端が接しているだけなら交わらない。VS Code の Range.areIntersecting と同じ）
+const intersecting = (a, b) => !(a.end.isBeforeOrEqual(b.start) || b.end.isBeforeOrEqual(a.start));
+
+// 問題（エラーと警告）を行に割り当て、行ごとに sym.problem（{ count: 子の行に配られなかった数, top: いちばん重い問題の重さ }。なければ undefined）
+// を付ける。1.140.0版の本体のプログラムの OutlineModel.updateMarker と OutlineElement._updateMarker と同じ：問題を範囲の始まりの順に並べ、
+// いちばん上の段の行から順に、範囲が交わる問題を取り、その中から子の行に配る。取った問題は、ほかの兄弟の行には配らない
+function assignProblems(roots, problems) {
+  const markers = problems.filter((p) => p.severity === SEVERITY.error || p.severity === SEVERITY.warning).sort((a, b) => compareRanges(a.range, b.range));
+  roots.forEach((sym) => assignTo(markers, sym));
+}
+
+function assignTo(markers, sym) {
+  sym.problem = undefined;
+  // 行の範囲と同じか、その直前の始まりの問題から見る（VS Code と同じ二分探索）
+  let low = 0;
+  let high = markers.length - 1;
+  let found = -1;
+  while (low <= high && found < 0) {
+    const mid = (low + high) >> 1;
+    const c = compareRanges(markers[mid].range, sym.range);
+    if (c < 0) low = mid + 1;
+    else if (c > 0) high = mid - 1;
+    else found = mid;
+  }
+  let n = found >= 0 ? found : low;
+  if (found < 0 && n > 0 && intersecting(markers[n - 1].range, sym.range)) n -= 1;
+  const mine = [];
+  let top;
+  for (; n < markers.length && intersecting(sym.range, markers[n].range); n++) {
+    mine.push(markers[n]);
+    if (!top || markers[n].severity > top) top = markers[n].severity;
+    markers[n] = null;
+  }
+  sym.children.forEach((child) => assignTo(mine, child));
+  if (top) sym.problem = { count: mine.length, top };
+  for (let k = markers.length - 1; k >= 0; k--) if (markers[k] === null) markers.splice(k, 1);
+}
+
+// 行の問題を消す（問題を出さない設定のとき）
+function clearProblems(list) {
+  list.forEach((sym) => {
+    sym.problem = undefined;
+    clearProblems(sym.children);
+  });
+}
+
+// 問題を出すか（VS Code 標準のアウトラインと同じく、problems.visibility と outline.problems.enabled の両方が true のとき。言語ごとの値は読まない）
+const problemsEnabled = () => !!vscode.workspace.getConfiguration('problems').get('visibility') && !!vscode.workspace.getConfiguration('outline').get('problems.enabled');
+
+// 行のファイルの装飾（なければ undefined）。VS Code 標準のアウトラインと同じく、いちばん重い問題がエラーなら list.errorForeground、警告なら
+// list.warningForeground の色を付け、バッジは、子の行に配られなかった数（10以上は「+9」）か、すべて子の行にあれば点にする。
+// outline.problems.colors が false のとき、VS Code 標準のアウトラインはバッジにだけ色を付けるが、ファイルの装飾の色は名前とバッジの両方に付くので、
+// 名前に色が付かないほうを合わせて、色を付けない（2026-10-27 に Claude が決めた）。バッジにマウスを乗せたときの文字は付けない（付けると、
+// 行の名前にマウスを乗せたときの文字にもつながるため。同じく Claude が決めた）
+function problemDecoration(problem) {
+  if (!problem) return undefined;
+  const config = vscode.workspace.getConfiguration('outline');
+  const color = config.get('problems.colors') ? new vscode.ThemeColor(problem.top === SEVERITY.error ? 'list.errorForeground' : 'list.warningForeground') : undefined;
+  const badge = config.get('problems.badges') ? (problem.count === 0 ? PROBLEM_DOT : problem.count < 10 ? String(problem.count) : '+9') : undefined;
+  return color || badge ? new vscode.FileDecoration(badge, undefined, color) : undefined;
+}
+
+// エラー・警告アイコン（0.4.0版のチケット33）の種類。Eclipse のアウトライン（JDT UI の ProblemsLabelDecorator）と同じく、問題の始まりの位置が
+// 行の範囲の中にあれば、その行の問題に数え（子の行の範囲も親の範囲の中なので、子の行の問題も親の行に数える）、いちばん重いもの
+// （エラー → 警告 → 情報）を1つ付ける。ヒントは Eclipse にない重さなので数えない。problems は ProblemPositions.get の結果
+const PROBLEM_ICONS = { [SEVERITY.error]: 'error', [SEVERITY.warning]: 'warning', [SEVERITY.info]: 'info' };
+function eclipseProblem(sym, problems) {
+  let top = 0;
+  for (const p of problems) {
+    const inside = sym.range.start.isBeforeOrEqual(p.range.start) && !sym.range.end.isBeforeOrEqual(p.range.start);
+    if (inside && p.severity > top && PROBLEM_ICONS[p.severity]) top = p.severity;
+  }
+  return PROBLEM_ICONS[top] || null;
+}
+
+// 装飾を比べるための文字（装飾がなければ 'none'）
+const decorationKey = (d) => (d ? JSON.stringify([d.badge, d.color && d.color.id]) : 'none');
+
+// 行の場所：ファイルの場所に、シンボルの範囲（1から数えた「行,桁-行,桁」）を付けたもの（rangeUri と同じ形）。範囲が同じ兄弟の行と、
+// 装飾を入れ替えるための2つの場所（toggle が0か1）を、範囲の始まりの行の数の頭に付ける0の数で分ける（VS Code は、範囲を読み直すときに頭の0を
+// 読み飛ばすので、ドラッグでエディターなどに渡る範囲は同じ）
+function rowPlace(sym, toggle) {
+  const r = sym.range;
+  const zeros = '0'.repeat(2 * sym.dup + toggle);
+  return sym.uri.with({ fragment: `${zeros}${r.start.line + 1},${r.start.character + 1}-${r.end.line + 1},${r.end.character + 1}` });
+}
+
+// 行の場所のファイルの装飾（vscode.FileDecorationProvider）。VS Code は場所ごとに装飾を覚え、替わった知らせを受けると、その場所の装飾を捨てて
+// 問い合わせ直し、返るまでは「装飾なし」として描き、描き直しを0.1秒まとめる（1.140.0版の本体のプログラムの DecorationsService で読んだ）。
+// 行を出し直すときに色とバッジが消えないよう、VS Code に返した装飾を覚えておき、新しい場所は、行を出す前に問い合わせさせる
+class RowDecorations {
+  constructor() {
+    this.changed = new vscode.EventEmitter();
+    this.onDidChangeFileDecorations = this.changed.event;
+    this.values = new Map(); // 行の場所 → 問い合わせられたら返す装飾
+    this.served = new Map(); // 行の場所 → VS Code に返した装飾の鍵（VS Code が覚えているもの）
+    this.waiting = new Map(); // 問い合わせてくるのを待っている場所 → 問い合わせてきたら呼ぶ関数
+  }
+
+  provideFileDecoration(uri) {
+    const place = String(uri);
+    if (!this.values.has(place)) return undefined; // 行の場所でなければ（エクスプローラーのファイルなど）、何も付けない
+    const d = this.values.get(place);
+    this.served.set(place, decorationKey(d));
+    const done = this.waiting.get(place);
+    if (done) {
+      this.waiting.delete(place);
+      done();
+    }
+    return d;
+  }
+
+  // VS Code が覚えている、場所の装飾の鍵（まだ問い合わせてきていなければ null）
+  servedKey(place) {
+    return this.served.has(String(place)) ? this.served.get(String(place)) : null;
+  }
+
+  // 場所の装飾が替わったことを知らせる（250個ずつに分ける）
+  fire(places) {
+    for (let i = 0; i < places.length; i += DECORATION_EVENT_SIZE) this.changed.fire(places.slice(i, i + DECORATION_EVENT_SIZE));
+  }
+
+  // 場所 places の装飾を VS Code に問い合わせさせ、問い合わせ終わるまで待つ（問い合わせてこなければ DECORATION_WAIT で終える）。
+  // 返した装飾が VS Code に届いてから行を出すよう、最後にひと呼吸おく
+  async preload(places) {
+    const asked = places.map((p) => new Promise((resolve) => this.waiting.set(String(p), resolve)));
+    this.fire(places);
+    let timer;
+    await Promise.race([Promise.all(asked), new Promise((resolve) => { timer = setTimeout(resolve, DECORATION_WAIT); })]);
+    clearTimeout(timer);
+    places.forEach((p) => this.waiting.delete(String(p)));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  // VS Code に覚えさせた場所が多すぎたら、全部捨てさせて true を返す（行を取り直すたびに場所が替わるので、増え続けないように）
+  flushIfLarge() {
+    if (this.served.size <= DECORATION_LIMIT) return false;
+    this.changed.fire(undefined);
+    this.served.clear();
+    this.values.clear();
+    return true;
+  }
+}
 
 // --- 編集のあとの取り直しの待ち時間（0.3.0版のチケット29） ---
 // VS Code 標準のアウトラインは、編集から取り直すまでの待ち時間を、ファイル（エディターが開いているモデル）ごとに、中身（シンボル）を
@@ -842,6 +1211,12 @@ class Outline {
     this.followTimer = null; // カーソルが止まるのを待っている
     this.tracking = false; // ファイルの行を出していて、取り直していないか。カーソル・問題・設定の変化で選び直すのは、この間だけ
     this.shownVersion = undefined; // 出している行を問い合わせたときの、ファイルの版（vscode.TextDocument の version）
+    // エラー・警告（0.4.0版）
+    this.positions = new ProblemPositions(); // 開いているファイルごとの、エディターが持つ問題の位置
+    this.decorations = new RowDecorations(); // 行の場所のファイルの装飾
+    this.problemsVersion = 0; // 表示中のファイルの問題か、問題の設定が変わった回数
+    this.problemsAt = 0; // 行を出す前に割り当てたとき（decorateRows）の problemsVersion。行を出すまでの間に変わったら、出したあとで割り当て直す
+    this.editDue = 0; // 編集で取り直す予定の時刻（editTimer があるときだけ使う）
   }
 
   // 前の知らせから0.2秒より長くたっていて、次の知らせがすぐ反映されるか
@@ -947,7 +1322,9 @@ class Outline {
   // 言語モードの切り替え（中身を返す拡張機能が替わる）。VS Code は、同じファイルを開き直したと知らせてくる。
   // VS Code 標準のアウトラインは、いったん中身のないツリーにしてから作り直すので、ボタンの出し分けの値も、そのとき「すべて折りたたまれている」になる。
   // 前に出していた中身も捨てるので、次の編集では、シンボルの数の割合を比べない（0.3.0版）
+  // ファイルを開いたときは、VS Code がエディターの問題を置き直すので、問題の位置も持ち直す（0.4.0版）
   onDocumentOpened(doc) {
+    this.positions.reset(doc);
     if (!this.uri || doc.uri.toString() !== this.uri.toString()) return;
     this.shownCount = null;
     if (this.hasOutline) this.updateAllCollapsed([]);
@@ -981,6 +1358,11 @@ class Outline {
   onConfigChanged(e) {
     if (!this.showingTree || !this.view.visible) return;
     if (!['outline', 'breadcrumbs', 'problems.visibility'].some((name) => e.affectsConfiguration(name))) return;
+    // 問題を出すかと、色とバッジの設定が変わったら、割り当て直す（0.4.0版。VS Code 標準のアウトラインも、そのときに割り当て直して描き直す）
+    if (e.affectsConfiguration('outline.problems') || e.affectsConfiguration('problems.visibility')) {
+      this.problemsVersion++;
+      this.reapplyProblems();
+    }
     const [selected] = this.view.selection;
     const before = selected && this.provider.rowId(selected);
     const hidden = this.hiddenSelection;
@@ -1076,10 +1458,17 @@ class Outline {
     }, FOLLOW_DELAY);
   }
 
-  // 問題が変わった知らせ。VS Code 標準のアウトラインは、出しているファイルの問題が変わると行を出し直し（VS Code が返した順から並べ直す）、
-  // そのときにも選ぶ
+  // 問題が変わった知らせ。開いているファイルの問題の位置を持ち直し、出しているファイルなら割り当て直す（0.4.0版）。
+  // VS Code 標準のアウトラインは、出しているファイルの問題が変わると行を出し直し（VS Code が返した順から並べ直す）、そのときにも選ぶ
   onDiagnosticsChanged(e) {
-    if (!this.tracking || !e.uris.some((u) => String(u) === String(this.uri))) return;
+    for (const u of e.uris) {
+      const doc = docOf(u);
+      if (doc) this.positions.reset(doc);
+    }
+    if (!e.uris.some((u) => String(u) === String(this.uri))) return;
+    this.problemsVersion++;
+    this.reapplyProblems();
+    if (!this.tracking) return;
     this.restoreOrder();
     this.follow();
   }
@@ -1156,11 +1545,14 @@ class Outline {
   // 編集の知らせ。VS Code 標準のアウトラインと同じく、知らせのたびに、そのときの待ち時間を読んで待ち直す（0.3.0版）。
   // 最後の編集で消した文字数を、取り直したときの比べ方（waitIfJumped）に渡す
   onDocumentChanged(e) {
+    this.positions.edit(e); // 問題の位置を、編集に合わせて動かす（0.4.0版。表示中でないファイルも）
     if (!this.uri || e.document.uri.toString() !== this.uri.toString()) return;
     if (e.contentChanges.length === 0) return;
     clearTimeout(this.editTimer);
     const removed = e.contentChanges.reduce((n, change) => n + change.rangeLength, 0);
-    this.editTimer = setTimeout(() => this.refresh(false, removed), this.editDelay.get(e.document));
+    const delay = this.editDelay.get(e.document);
+    this.editDue = Date.now() + delay;
+    this.editTimer = setTimeout(() => this.refresh(false, removed), delay);
   }
 
   // ファイル uri のシンボルを問い合わせる。VS Code の内部のコマンド SYMBOLS_COMMAND で、tags（非推奨の印）も受け取る。
@@ -1185,6 +1577,7 @@ class Outline {
   // removed は、編集で取り直すときの、最後の編集で消した文字数（0.3.0版。編集のほかで取り直すときは null）
   async refresh(retrying = false, removed = null) {
     clearTimeout(this.editTimer);
+    this.editTimer = null;
     clearTimeout(this.retryTimer);
     // 取り直している間は、カーソルに追従で選ばない（VS Code 標準のアウトラインも、作り直している間は、カーソルなどの知らせを受けない）
     clearTimeout(this.followTimer);
@@ -1242,6 +1635,13 @@ class Outline {
     }
     this.retryUri = null;
     if (removed !== null && await this.waitIfJumped(roots, doc, removed, generation)) return;
+    // エラー・警告を割り当て、VS Code がまだ覚えていない行の場所の装飾を、行を出す前に問い合わせさせる（0.4.0版）。
+    // 問い合わせさせずに行を出すと、問い合わせている間（約0.1秒）、取り直した行の色とバッジが消える
+    const pending = this.decorateRows(roots, uri);
+    if (pending.length) {
+      await this.decorations.preload(pending);
+      if (generation !== this.generation || this.disposed) return;
+    }
     if (!java) return this.showFile(roots, uri, version);
 
     // トークンは、シンボルが返ってから TOKENS_WAIT だけ待つ。間に合えば、アイコンを入れてから行を出す。
@@ -1252,6 +1652,7 @@ class Outline {
     this.remember(uri);
     const iconsReady = !!extra && this.applyIcons(roots, extra, doc);
     if (!iconsReady) this.applyRememberedIcons(roots);
+    this.applyProblemIcons(roots, doc); // エラー・警告アイコン（0.4.0版）
     this.applyFieldTypes(roots);
     this.showFile(roots, uri, version);
     await this.fillJava(roots, uri, doc, generation, iconsReady, fieldsOf(roots), extra ? null : tokensQuery);
@@ -1269,6 +1670,117 @@ class Outline {
     if (!(now <= before * 0.5 || now >= before * 1.5)) return false;
     await new Promise((resolve) => setTimeout(resolve, JUMP_WAIT));
     return generation !== this.generation || this.disposed;
+  }
+
+  // --- エラー・警告（0.4.0版のチケット30〜32） ---
+
+  // 行を出す前に、問題を行に割り当て、行の場所と装飾を決める。VS Code がまだ覚えていない装飾の場所を返す（行を出す前に問い合わせさせる）
+  decorateRows(roots, uri) {
+    const doc = docOf(uri);
+    this.problemsAt = this.problemsVersion;
+    if (doc && problemsEnabled()) assignProblems(roots, this.positions.get(doc));
+    const flushed = this.decorations.flushIfLarge();
+    return this.pickPlaces(roots, flushed ? [] : this.provider.roots);
+  }
+
+  // Java の行のアイコンの部品に、エラー・警告アイコン（problem）を付けるか外す（0.4.0版のチケット33）。問題を出さない設定のときと、
+  // ファイルの中身がまだ届いていないときは外す。アイコンの部品は、覚えておいたもの（rowIcons）と共有しているので、書き換えずに作り直す。
+  // アイコンが替わった行を返す
+  applyProblemIcons(roots, doc) {
+    const problems = doc && problemsEnabled() ? this.positions.get(doc) : [];
+    const changed = [];
+    const walk = (list) => list.forEach((sym) => {
+      if (sym.icon) {
+        const problem = eclipseProblem(sym, problems);
+        if ((sym.icon.problem || null) !== problem) {
+          const { problem: _, ...rest } = sym.icon;
+          sym.icon = problem ? { ...rest, problem } : rest;
+          changed.push(sym);
+        }
+      }
+      walk(sym.children);
+    });
+    walk(roots);
+    return changed;
+  }
+
+  // 行ごとに、2つの場所（toggle が0か1）のうち、VS Code が覚えている装飾が、出したい装飾と同じものを使う（まだ問い合わせてきていない場所は、
+  // 装飾がないのと同じ）。どちらも違えば、いま出している行（shownRoots）が使っていないほうを使い、その場所を返す（先に問い合わせさせる）。
+  // いま出している行の場所の装飾を問い合わせ直させると、問い合わせ直している間、その行の色とバッジが消えるため
+  pickPlaces(roots, shownRoots) {
+    const shown = new Set();
+    const collect = (list) => list.forEach((sym) => {
+      if (sym.place) shown.add(String(sym.place));
+      collect(sym.children);
+    });
+    collect(shownRoots);
+    const pending = [];
+    const walk = (list) => list.forEach((sym) => {
+      const d = problemDecoration(sym.problem);
+      const key = decorationKey(d);
+      const places = [rowPlace(sym, 0), rowPlace(sym, 1)];
+      const served = places.map((p) => this.decorations.servedKey(p));
+      let i = served.findIndex((k) => k === key || (k === null && key === 'none'));
+      if (i < 0) {
+        i = shown.has(String(places[0])) ? 1 : 0;
+        pending.push(places[i]);
+      }
+      sym.place = places[i];
+      this.decorations.values.set(String(sym.place), d);
+      walk(sym.children);
+    });
+    walk(roots);
+    return pending;
+  }
+
+  // 表示中のファイルの問題か、問題の設定が変わったとき、出している行に割り当て直す（VS Code 標準のアウトラインの _applyMarkersToOutline）。
+  // 前の知らせから0.2秒たっていて、編集で取り直すまで0.2秒以上あるときは、装飾が替わる行の場所を替えて、先に問い合わせさせてから、その行を
+  // 出し直す（装飾が替わった知らせは、VS Code が0.1秒まとめてから描くので、それより早い）。ほかのときは、場所を替えずに、装飾が替わった
+  // 知らせを送る（行を出し直すと VS Code の0.2秒のまとめが始まり、すぐあとの知らせや取り直しの行が遅れるため）。
+  // 問い合わせさせている間に、取り直すまで0.2秒もなくなったときは、出し直さずに、取り直したときに出す（2026-10-28 に E2E テストで、
+  // 待っている間に取り直しが近づき、取り直しの行が0.2秒遅れたのを見つけた）
+  async reapplyProblems() {
+    if (!this.showingTree || !this.view.visible || !this.uri) return;
+    const generation = this.generation;
+    const roots = this.provider.roots;
+    const doc = docOf(this.uri);
+    if (doc && problemsEnabled()) assignProblems(roots, this.positions.get(doc));
+    else clearProblems(roots);
+    // エラー・警告アイコンが替わる行（チケット33）は、どちらの出し方でも、行を出し直す（アイコンは行の中身なので、装飾の知らせでは替わらない）。
+    // 編集で取り直すまで0.2秒もないときは、替えずに、取り直したときに決める（古い行に新しい位置の問題を当てた一時のアイコンを出さないため）
+    const soon = !!this.editTimer && this.editDue - Date.now() < VSCODE_DEBOUNCE;
+    const iconRows = soon ? [] : this.applyProblemIcons(roots, doc);
+    if (!this.quiet || soon) {
+      const changed = [];
+      const walk = (list) => list.forEach((sym) => {
+        const d = problemDecoration(sym.problem);
+        const was = this.decorations.servedKey(sym.place);
+        this.decorations.values.set(String(sym.place), d);
+        if (was === null ? d !== undefined : was !== decorationKey(d)) changed.push(sym.place);
+        walk(sym.children);
+      });
+      walk(roots);
+      this.decorations.fire(changed);
+      if (iconRows.length) {
+        this.provider.changed.fire(iconRows);
+        this.changedAt = Date.now();
+      }
+      return;
+    }
+    const before = new Map();
+    const remember = (list) => list.forEach((sym) => {
+      before.set(sym, String(sym.place));
+      remember(sym.children);
+    });
+    remember(roots);
+    const pending = this.pickPlaces(roots, roots);
+    if (pending.length) await this.decorations.preload(pending);
+    if (generation !== this.generation || this.disposed) return;
+    if (this.editTimer && this.editDue - Date.now() < VSCODE_DEBOUNCE) return;
+    const rows = [...before].filter(([sym, place]) => String(sym.place) !== place || iconRows.includes(sym)).map(([sym]) => sym);
+    if (!rows.length) return;
+    this.provider.changed.fire(rows);
+    this.changedAt = Date.now();
   }
 
   // --- 開閉状態（0.3.0版） ---
@@ -1331,6 +1843,8 @@ class Outline {
     this.updateAllCollapsed();
     this.tracking = true;
     this.shownVersion = version !== undefined ? version : (docOf(uri) || {}).version;
+    // 割り当ててから行を出すまでの間に、問題か問題の設定が変わっていたら、割り当て直す（0.4.0版）
+    if (this.problemsAt !== this.problemsVersion) this.reapplyProblems();
     if (this.follow()) return;
     if (saved) this.reselect(roots, saved);
     else if (selected) this.reselect(roots, selected.id, before);
@@ -1411,6 +1925,7 @@ class Outline {
   // 行を出したあとで返ったトークンから、アイコンを入れて VS Code に知らせる。入れられたら true
   applyIconsLater(roots, extra, doc, generation) {
     if (generation !== this.generation || this.disposed || !this.applyIcons(roots, extra, doc)) return false;
+    this.applyProblemIcons(roots, doc); // エラー・警告アイコン（0.4.0版）
     this.provider.changed.fire(); // 全部の行のアイコンが替わる
     this.changedAt = Date.now();
     return true;
@@ -1524,6 +2039,10 @@ function activate(context) {
     vscode.languages.onDidChangeDiagnostics((e) => outline.onDiagnosticsChanged(e)),
     vscode.workspace.onDidChangeTextDocument((e) => outline.onDocumentChanged(e)),
     vscode.workspace.onDidOpenTextDocument((d) => outline.onDocumentOpened(d)),
+    // エラー・警告（0.4.0版）：行の場所のファイルの装飾、閉じたファイルの問題の位置を捨てる、拡張機能が替わったら単語の決まりを読み直す
+    vscode.window.registerFileDecorationProvider(outline.decorations),
+    vscode.workspace.onDidCloseTextDocument((d) => outline.positions.forget(d)),
+    vscode.extensions.onDidChange(() => wordPatterns.clear()),
     vscode.workspace.onDidChangeConfiguration((e) => outline.onConfigChanged(e)),
     view.onDidChangeVisibility(() => outline.onVisibilityChanged()),
     view.onDidExpandElement((e) => outline.onToggled(e.element, true)),
@@ -1552,4 +2071,6 @@ async function openOnFirstStart(context) {
 function deactivate() {}
 
 // activate と deactivate のほかは、ユニットテスト（公開しないファイル）から呼ぶために出している
-module.exports = { activate, deactivate, toSymbols, symbolAt, countRows, EditDelay, declarations, stripCode, javaIcon, addJavaIcons, iconSvg, iconUri, fieldType, OutlineProvider, Outline, Navigator, ViewState, MESSAGES, KIND_NAMES, LOADING_DELAY, EDIT_DELAY, EDIT_DELAY_MAX, EDIT_DELAY_DEFAULT, EDIT_DELAY_SAMPLES, EDIT_DELAY_FILES, JUMP_WAIT, JUMP_MIN_LINES, TOKENS_WAIT, RETRY_DELAY, RETRY_SLOW_DELAY, RETRY_FAST_PERIOD, OPEN_DELAY, DOUBLE_CLICK_TIME, KEY_WAIT, FOLLOW_DELAY, OPEN_STATES_SIZE };
+module.exports = { activate, deactivate, toSymbols, symbolAt, countRows, EditDelay, declarations, stripCode, javaIcon, addJavaIcons, iconSvg, iconUri, fieldType, OutlineProvider, Outline, Navigator, ViewState, MESSAGES, KIND_NAMES, LOADING_DELAY, EDIT_DELAY, EDIT_DELAY_MAX, EDIT_DELAY_DEFAULT, EDIT_DELAY_SAMPLES, EDIT_DELAY_FILES, JUMP_WAIT, JUMP_MIN_LINES, TOKENS_WAIT, RETRY_DELAY, RETRY_SLOW_DELAY, RETRY_FAST_PERIOD, OPEN_DELAY, DOUBLE_CLICK_TIME, KEY_WAIT, FOLLOW_DELAY, OPEN_STATES_SIZE,
+  parseJsonc, wordPattern, wordPatterns, wordAt, markerRange, acceptEdit, ProblemPositions, assignProblems, problemDecoration, rowPlace, RowDecorations, eclipseProblem,
+  SEVERITY, MARKER_TAKE, DECORATION_EVENT_SIZE, DECORATION_WAIT, DECORATION_LIMIT, PROBLEM_DOT };
