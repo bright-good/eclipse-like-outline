@@ -446,6 +446,10 @@ const DEPRECATED = { member: deprecatedLine('M-2 15.5 12.5 1'), type: deprecated
 // 修飾子アイコン：[幅, 高さ, 切り抜く四角, 図]。図は左上を0,0として描く。
 // 下の図は、Eclipse が白い四角を置くところで切り抜く。文字は、1倍の画面でにじまないよう、画素の中心を通る直線と、角を落とした斜めの線で描く
 const overlay = (w, h, box, body) => [w, h, `<rect ${box}/>`, body];
+// オーバーライドアイコン・実装アイコンの三角と、切り抜く形（三角と、まわりと下の白いふち）。synchronized とまとめた図の、左上の小さな時計（0.5.0版）
+const OVERRIDE_TRIANGLE = 'M3 1h1l3 3v1H0V4Z';
+const OVERRIDE_CUT = '<path d="M3 0h1l3 3v3H0V3Z"/>';
+const SMALL_CLOCK = '<circle cx="2.5" cy="2.5" r="2" fill="#e6f1fb" stroke="#1c64a4"/><path d="M2 2h1v1H2z" fill="#1c3f73"/>';
 const letter = (w, h, box, d, color) => overlay(w, h, box, `<path d="${d}" fill="none" stroke="${color}"/>`);
 const OVERLAYS = {
   abstract: letter(7, 8, 'width="7" height="8"', 'M1 7.6 3.5.7 6 7.6M2.2 4.5h2.6', '#208142'),
@@ -458,6 +462,14 @@ const OVERLAYS = {
   transient: letter(7, 8, 'width="7" height="8"', 'M1 1.5h5M3.5 1.5V8', '#7562b6'),
   synchronized: overlay(7, 8, 'width="7" height="8"', '<circle cx="3.5" cy="4" r="3" fill="#e6f1fb" stroke="#1c64a4"/><path d="M3.5 2v2.5h1.5" fill="none" stroke="#1c3f73"/>'),
   run: overlay(7, 8, 'y="1" width="7" height="7"', gradient('r', '#9bd394', '#2f8f4f') + '<path d="M1.5 1.5 6 4.5 1.5 7.5Z" fill="url(#r)" stroke="#1e7048" stroke-linejoin="round"/>'),
+  // オーバーライドアイコン・実装アイコン（0.5.0版のチケット35。2026-10-30 にユーザーが画像を見て了承した）。Eclipse の over_co・implm_co・
+  // sync_over・sync_impl を画素ごとに読んで描いたもの。三角は、Eclipse の1倍の画像と同じく、1行下がるごとに左右に1画素ずつ広がる形で、
+  // 斜めの辺が画素の半分を通るので、1倍の画面で Eclipse と同じ画素が薄い紫になる。Eclipse が白で塗るところ（三角のまわりと下の白いふち、
+  // 実装アイコンの三角の中、synchronized とまとめた図の白い四角）は、白で塗らずに切り抜く
+  override: [7, 8, OVERRIDE_CUT, `<path d="${OVERRIDE_TRIANGLE}" fill="#4e39a2"/><path d="M3.5 2 5 4H2Z" fill="#7fc563"/>`],
+  implement: [7, 8, OVERRIDE_CUT, `<path d="${OVERRIDE_TRIANGLE}M3.5 2 5 4H2Z" fill="#6247b5" fill-rule="evenodd"/>`],
+  syncOverride: [7, 8, '<rect width="7" height="8"/>', SMALL_CLOCK + '<path d="M4 5h1l2 2v1H1Z" fill="#159443"/>'],
+  syncImplement: [7, 8, '<rect width="7" height="8"/>', SMALL_CLOCK + '<path d="M4 5h1l2 2v1H1ZM4 6.2 4.6 7H3.4Z" fill="#4f32a8" fill-rule="evenodd"/>'],
 };
 
 // ダーク テーマ用の図で替える色（ライト テーマ用の色 → ダーク テーマ用の色）。ここにない色は、ダーク テーマ用でも同じ。
@@ -475,6 +487,7 @@ const DARK_COLORS = {
   '#5d93c8': '#8cc0f2', '#1f5f9e': '#4a8ad0', '#1f63a2': '#7ab4ec', // package の三角（メソッドの図の塗りと縁、型アイコンの右下の縁）
   '#3a78b4': '#5d9ee0', '#2468a6': '#7ab4ec', // package の三角（フィールドの図と、型アイコンの右下の塗り）
   '#1365a5': '#6aa7e6', // 情報のエラー・警告アイコンの i（0.4.0版）
+  '#4e39a2': '#a594f2', '#4f32a8': '#a594f2', '#6247b5': '#b3a5f5', // オーバーライドアイコン・実装アイコンの紫の縁（0.5.0版）
 };
 
 // エラー・警告アイコン（0.4.0版のチケット33）：[描く図, 下の図を切り抜く形]。Eclipse の error_co（赤い四角に白い ×）・warning_co（黄色い三角に !）・
@@ -507,7 +520,11 @@ function iconSvg(icon, dark = false) {
     boxes += `<g transform="translate(0 8)">${cut}</g>`;
     overlays += `<g transform="translate(0 8)">${draw}</g>`;
   }
-  for (const [names, top] of [[icon.tr, true], [icon.br, false]]) {
+  // オーバーライド・実装（0.5.0版）は、Eclipse と同じく右下の角（右端）に置く。synchronized のメソッドでは、時計とまとめた図にする
+  const sync = icon.br.includes('synchronized');
+  const br = !icon.override ? icon.br
+    : [sync ? (icon.override === 'override' ? 'syncOverride' : 'syncImplement') : icon.override, ...icon.br.filter((x) => x !== 'synchronized')];
+  for (const [names, top] of [[icon.tr, true], [br, false]]) {
     let right = 16;
     for (const name of names) {
       const [w, h, box, svg] = OVERLAYS[name];
@@ -560,6 +577,317 @@ function fieldType(hovers, name) {
     }
   }
   return null;
+}
+
+// --- オーバーライド（0.5.0版のチケット34） ---
+// Eclipse のアウトラインは、親の型のメソッドを書き換えているメソッドの行に、親のメソッドが abstract なら実装アイコン、そうでなければ
+// オーバーライドアイコンを重ねる（Eclipse の OverrideIndicatorLabelDecorator。コンストラクター・private・static には付けない。@Override の有無は見ない）。
+// 親のメソッドは、Language Support for Java by Red Hat がメソッドのホバーに足すリンク「Go to Super Implementation」から取る。リンクは、
+// jdt.ls が Eclipse と同じ部品（MethodOverrideTester.findOverriddenMethod）で探したもの。jdt.ls は、インターフェイスの中のメソッドでは探さず、
+// 匿名クラスのメソッドにもリンクを付けないことがある（条件は分からない）ので、そのときだけ、型の階層の問い合わせで自前で探す
+// （2026-10-29 にプロトタイプで確かめた。リンクと自前の両方で取れた105個は、すべて同じ親だった）
+
+const SUPER_LINK = 'command:java.action.navigateToSuperImplementation?';
+
+// ホバーの中身から、親のメソッドへのリンクを読む。リンクの引数は [{ uri: ファイルの場所を base64 にしたもの, range }]、
+// ツールチップは「Go to super method '型の名前.メソッドの名前'」（入れ子の型は $ でつなぐ）。
+// { uri: ファイルの場所（文字）, range, type: 型の名前, method: メソッドの名前 } を返す。リンクがないか、壊れていれば null
+function superLink(hovers) {
+  for (const hover of hovers || []) {
+    for (const c of hover.contents || []) {
+      const s = typeof c === 'string' ? c : c.value;
+      const i = s.indexOf(SUPER_LINK);
+      if (i < 0) continue;
+      let k = i + SUPER_LINK.length;
+      while (k < s.length && s[k] !== ')' && s[k] !== ' ') k++;
+      try {
+        const [arg] = JSON.parse(decodeURIComponent(s.slice(i + SUPER_LINK.length, k)));
+        const tip = /^ "Go to super method '(.*)\.([^.']+)'"/.exec(s.slice(k));
+        const start = arg.range.start;
+        if (typeof arg.uri !== 'string' || !Number.isInteger(start.line) || !Number.isInteger(start.character)) return null;
+        return { uri: Buffer.from(arg.uri, 'base64').toString('utf8'), range: arg.range, type: tip ? tip[1] : null, method: tip ? tip[2] : null };
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+// メソッドの宣言の文字：from（既定は名前の行の頭）から、名前の後ろの、括弧の外にある最初の { か ; まで（コメントと文字列の中は飛ばす）。
+// 見つからなければ null。text は、ファイルの中身（何度も呼ぶときに、毎回作らないため）
+function declText(doc, nameStart, from = new vscode.Position(nameStart.line, 0), text = doc.getText()) {
+  const start = doc.offsetAt(from);
+  let depth = 0;
+  for (let i = doc.offsetAt(nameStart); i < text.length; i++) {
+    const c = text[i];
+    if (c === '/' && text[i + 1] === '/') {
+      i = text.indexOf('\n', i);
+      if (i < 0) break;
+    } else if (c === '/' && text[i + 1] === '*') {
+      i = text.indexOf('*/', i + 2);
+      if (i < 0) break;
+      i++;
+    } else if (c === '"' || c === "'") {
+      for (i++; i < text.length && text[i] !== c; i++) if (text[i] === '\\') i++;
+    } else if (c === '(') {
+      depth++;
+    } else if (c === ')') {
+      depth--;
+    } else if (depth === 0 && (c === '{' || c === ';')) {
+      return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+// 親のメソッドが abstract か（Eclipse の JdtFlags.isAbstract と同じ意味）を、宣言の文字で決める。中身がなく、native でなければ abstract。
+// インターフェイスの、何も書かないメソッドは中身がないので abstract、default・static・private のメソッドには中身がある。
+// 逆コンパイルした中身（jdt.ls はセマンティックトークンを返さない）にも、ソースにも使える。宣言が見つからなければ null
+const abstractByText = (decl) => (decl === null ? null : decl.endsWith(';') && !hasWord(stripCode(decl), 'native'));
+
+// シンボルの名前「名前(A, B<C>) <U>」を、名前・引数の型（型引数と、包むパッケージを除いた名前。可変長引数は配列）・メソッドの型引数に分ける
+function signature(symName) {
+  const open = symName.indexOf('(');
+  const close = symName.lastIndexOf(')');
+  const split = (text) => {
+    const out = [];
+    let depth = 0;
+    let cur = '';
+    for (const ch of text) {
+      if (ch === '<') depth++;
+      if (ch === '>') depth--;
+      if (ch === ',' && depth === 0) {
+        out.push(cur.trim());
+        cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  };
+  const erase = (t) => {
+    let depth = 0;
+    let out = '';
+    for (const ch of t) {
+      if (ch === '<') depth++;
+      else if (ch === '>') depth--;
+      else if (!depth) out += ch;
+    }
+    return out.replace(/\.\.\.$/, '[]').replace(/\s+/g, '').replace(/^.*\./, '');
+  };
+  const vars = /^\s*<(.*)>\s*$/.exec(symName.slice(close + 1));
+  return { name: symName.slice(0, open), params: split(symName.slice(open + 1, close)).map(erase), typeVars: vars ? typeVars(vars[1]) : [] };
+}
+
+// 型引数の並び「T extends Comparable<T>, U」から、型引数の名前を取り出す
+const typeVars = (text) => {
+  const out = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of text) {
+    if (ch === '<') depth++;
+    if (ch === '>') depth--;
+    if (ch === ',' && depth === 0) {
+      out.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out.map((x) => x.trim().split(/\s+/)[0]).filter(Boolean);
+};
+
+// 2つのメソッドの名前と引数が同じか。親のメソッドの引数の型が、型引数（T など）なら、どの型とも同じとみなす（Eclipse は型引数を当てはめて
+// 比べる。拡張機能から取れるのは、シンボルの名前に入った型の名前だけなので、2026-10-29 に Claude が決めた）
+function sameSignature(ours, theirs, theirTypeVars) {
+  if (ours.name !== theirs.name || ours.params.length !== theirs.params.length) return false;
+  const vars = new Set([...theirTypeVars, ...theirs.typeVars]);
+  return ours.params.every((p, i) => {
+    const t = theirs.params[i];
+    const base = t.replace(/(\[\])+$/, '');
+    return t === p || (vars.has(base) && p.endsWith(t.slice(base.length)));
+  });
+}
+
+// java.lang.Object の、書き換えられるメソッド（どれも abstract ではない）。匿名クラスの親がインターフェイスのとき、親のクラスは Object なので、
+// 先にこれと比べる（Eclipse と同じく、親のクラスを先に探す）
+const OBJECT_METHODS = ['equals(Object)', 'hashCode()', 'toString()', 'clone()', 'finalize()'];
+
+// 1回の問い合わせの間、親の型のファイル（中身とシンボル）を使い回す
+class ParentFiles {
+  constructor() {
+    this.files = new Map();
+  }
+
+  get(uri) {
+    const key = String(uri);
+    if (!this.files.has(key)) {
+      this.files.set(key, (async () => {
+        const doc = await vscode.workspace.openTextDocument(uri);
+        const symbols = (await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', doc.uri)) || [];
+        return { doc, symbols };
+      })());
+    }
+    return this.files.get(key);
+  }
+}
+
+// シンボルの中から、名前が name（型引数を除いて比べる）の型を、入れ子もたどって探す。path は、入れ子の型の名前の並び（外から）
+function findType(symbols, path) {
+  let list = symbols;
+  let found = null;
+  for (const name of path) {
+    found = list.find((x) => TYPE_KINDS.includes(x.kind) && x.name.replace(/<.*$/, '') === name);
+    if (!found) return null;
+    list = found.children || [];
+  }
+  return found;
+}
+
+// 型の行の型引数：シンボルの名前（ワークスペースのファイルは「名前<T>」）か、宣言の文字の、名前の後ろ
+// （クラスファイルのシンボルの名前には、型引数が入らない）から読む
+function typeVarsOfType(doc, type) {
+  const m = /<(.*)>$/.exec(type.name);
+  if (m) return typeVars(m[1]);
+  const after = doc.getText(new vscode.Range(type.selectionRange.end, type.selectionRange.end.translate(0, 200)));
+  if (!after.startsWith('<')) return [];
+  let depth = 0;
+  for (let i = 0; i < after.length; i++) {
+    if (after[i] === '<') depth++;
+    if (after[i] === '>' && --depth === 0) return typeVars(after.slice(1, i));
+  }
+  return [];
+}
+
+// 型の行 type の中から、ours（signature の結果）と同じメソッドを探す。private・static のメソッドは数えない（Eclipse の
+// MethodOverrideTester.findOverriddenMethodInType と同じ）。見つかれば、そのメソッドが abstract か（宣言が読めなければ false）、なければ null
+function methodIn(doc, type, ours) {
+  const vars = typeVarsOfType(doc, type);
+  for (const m of type.children || []) {
+    if (m.kind !== SK.Method || !sameSignature(ours, signature(m.name), vars)) continue;
+    const head = stripCode(doc.getText(new vscode.Range(m.range.start, m.selectionRange.start)));
+    if (hasWord(head, 'private') || hasWord(head, 'static')) continue;
+    return !!abstractByText(declText(doc, m.selectionRange.start, m.range.start));
+  }
+  return null;
+}
+
+// リンクの先の親のメソッドが abstract か。ワークスペースのファイルは、リンクの位置の宣言の文字で見る。クラスファイル（jdt://）は、
+// jdt.ls が逆コンパイルした中身で、リンクの位置がずれることがあるので、ツールチップの型の名前とシンボルで探し直す（2026-10-29 にプロトタイプで、
+// AbstractList.get のリンクが入れ子のクラスの get を、Comparable.compareTo のリンクがファイルの先頭を指した）。決められなければ null
+async function linkedParentAbstract(link, sym, files) {
+  const uri = vscode.Uri.parse(link.uri);
+  const { doc, symbols } = await files.get(uri);
+  if (uri.scheme !== 'jdt') {
+    const start = new vscode.Position(link.range.start.line, link.range.start.character);
+    return abstractByText(declText(doc, start));
+  }
+  if (!link.type || !link.method) return null;
+  const pkg = symbols.find((x) => x.kind === SK.Package);
+  const name = pkg && link.type.startsWith(pkg.name + '.') ? link.type.slice(pkg.name.length + 1) : link.type.replace(/^.*\./, '');
+  const type = findType(symbols, name.split('$'));
+  if (!type) return null;
+  const methods = (type.children || []).filter((m) => m.kind === SK.Method && m.name.startsWith(link.method + '('));
+  const count = signature(sym.name).params.length;
+  const m = methods.find((x) => signature(x.name).params.length === count) || methods[0];
+  return m ? abstractByText(declText(doc, m.selectionRange.start, m.range.start)) : null;
+}
+
+// 型の階層の項目 item の型と、その親の型から、ours と同じメソッドを探す。Eclipse の MethodOverrideTester と同じく、
+// 型のメソッド → 親のクラス → 親のインターフェイスの順に、いちばん近いものを取る。同じ型は2回調べない。
+// 見つかれば abstract か、なければ null
+async function findInType(item, ours, visited, files) {
+  const key = `${item.uri}#${item.selectionRange.start.line}:${item.selectionRange.start.character}:${item.name}`;
+  if (visited.has(key)) return null;
+  visited.add(key);
+  const { doc, symbols } = await files.get(item.uri);
+  // 型の行は、位置で探す。クラスファイルの型は、型の階層が返す位置がファイルの先頭になるので、名前で探す
+  let type = null;
+  const at = (list) => list.forEach((x) => {
+    if (!type && TYPE_KINDS.includes(x.kind) && x.selectionRange.start.isEqual(item.selectionRange.start)) type = x;
+    at(x.children || []);
+  });
+  at(symbols);
+  if (!type) {
+    const byName = (list) => list.forEach((x) => {
+      if (!type && TYPE_KINDS.includes(x.kind) && x.name.replace(/<.*$/, '') === item.name.replace(/<.*$/, '')) type = x;
+      byName(x.children || []);
+    });
+    byName(symbols);
+  }
+  const found = type ? methodIn(doc, type, ours) : null;
+  return found !== null ? found : findInSupertypes(item, ours, visited, files);
+}
+
+async function findInSupertypes(item, ours, visited, files) {
+  const sup = (await vscode.commands.executeCommand('vscode.provideSupertypes', item)) || [];
+  const order = [...sup.filter((x) => x.kind === SK.Class || x.kind === SK.Enum), ...sup.filter((x) => x.kind === SK.Interface)];
+  for (const x of order) {
+    const found = await findInType(x, ours, visited, files);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+// 型の階層の問い合わせ（vscode.prepareTypeHierarchy・vscode.provideSupertypes）で、メソッド sym（宣言した型は type）の親のメソッドを探す。
+// 見つかれば abstract か、なければ null
+async function findInHierarchy(uri, sym, type, anonymous, files) {
+  const ours = signature(sym.name);
+  const items = (await vscode.commands.executeCommand('vscode.prepareTypeHierarchy', uri, type.selectionRange.start)) || [];
+  if (!items.length) return null;
+  const visited = new Set();
+  if (!anonymous) return findInSupertypes(items[0], ours, visited, files);
+  // 匿名クラスでは、型の階層は new の後ろに書いた型を返す。それがインターフェイスなら、親のクラスは Object なので、先に Object と比べる
+  if (items[0].kind === SK.Interface && OBJECT_METHODS.some((m) => sameSignature(ours, signature(m), []))) return false;
+  return findInType(items[0], ours, visited, files);
+}
+
+// メソッド sym のホバー hovers から、オーバーライドアイコン・実装アイコンのどちらを付けるかを決める：'override'・'implement'・null（付けない）
+async function overrideKind(sym, uri, hovers, files) {
+  const link = superLink(hovers);
+  let parentAbstract = null;
+  if (link) {
+    parentAbstract = await linkedParentAbstract(link, sym, files);
+  } else {
+    // リンクがなく、宣言した型がインターフェイスか匿名クラスのときだけ、自前で探す（自前の比べ方は Eclipse より粗いので、範囲を狭くする）
+    const type = declaringType(sym);
+    const anonymous = !!type && /^new .*\{\.\.\.\}$/.test(type.name);
+    if (type && (anonymous || typeName(type) === 'interface')) parentAbstract = await findInHierarchy(uri, sym, type, anonymous, files);
+  }
+  return parentAbstract === null ? null : parentAbstract ? 'implement' : 'override';
+}
+
+// オーバーライドを問い合わせるメソッド：Java のアイコンが決まったメソッドのうち、private・static でないもの（Eclipse が付けないものは問い合わせない）
+function overrideTargets(roots) {
+  const out = [];
+  const walk = (list) => list.forEach((sym) => {
+    if (sym.kind === SK.Method && sym.icon && !sym.mods.has('private') && !sym.mods.has('static')) out.push(sym);
+    walk(sym.children);
+  });
+  walk(roots);
+  return out;
+}
+
+// ほかの Java のファイルが変わってから、表示中のファイルのオーバーライドを問い合わせ直すまで（jdt.ls が変わったファイルを読み直すのを待つ）
+const OVERRIDE_REQUERY_DELAY = 1000;
+
+// ファイルの中身のうち、オーバーライドの決まりに関わるところ：パッケージ宣言と import の行、型の宣言（範囲の始まりから最初の { まで。
+// extends・implements を含む）、メソッドの宣言（範囲の始まりから、中身の { か ; まで。修飾子・名前・引数・中身があるか）。コメント・文字列・
+// アノテーションは除く。編集で取り直したとき、これが替わっていなければ、前に決めた結果をそのまま使い、問い合わせ直さない
+// （メソッドの中身の編集では、オーバーライドかどうかは替わらない。問い合わせ直すと jdt.ls の仕事が増え、次の取り直しの行が遅れる。
+// 2026-10-30 に E2E テストで、メソッド250個のファイルの取り直しが、問い合わせ直すと平均で約40ms 遅れると分かった）
+function overrideFingerprint(roots, doc) {
+  const text = doc.getText();
+  const parts = text.split('\n').filter((l) => /^\s*(package|import)\s/.test(l)).map((l) => l.trim());
+  const walk = (list) => list.forEach((sym) => {
+    if (TYPE_KINDS.includes(sym.kind) || sym.kind === SK.Method) parts.push(stripCode(declText(doc, sym.selectionRange.start, sym.range.start, text) || sym.name));
+    walk(sym.children);
+  });
+  walk(roots);
+  return parts.join('\n');
 }
 
 // --- ビューの中身 ---
@@ -1217,6 +1545,11 @@ class Outline {
     this.problemsVersion = 0; // 表示中のファイルの問題か、問題の設定が変わった回数
     this.problemsAt = 0; // 行を出す前に割り当てたとき（decorateRows）の problemsVersion。行を出すまでの間に変わったら、出したあとで割り当て直す
     this.editDue = 0; // 編集で取り直す予定の時刻（editTimer があるときだけ使う）
+    // オーバーライド（0.5.0版）
+    this.overrides = new Map(); // 表示中のファイルで決めたオーバーライド・実装（行の id → 'override'・'implement'・null）
+    this.overrideRound = 0; // オーバーライドの問い合わせの回数。古い問い合わせの結果を捨てるため
+    this.overrideTimer = null; // ほかの Java のファイルが変わったあとの、問い合わせ直しを待っている
+    this.overrideFingerprint = null; // overrides を決めたときの、オーバーライドの決まりに関わる中身（overrideFingerprint）
   }
 
   // 前の知らせから0.2秒より長くたっていて、次の知らせがすぐ反映されるか
@@ -1230,6 +1563,7 @@ class Outline {
     clearTimeout(this.editTimer);
     clearTimeout(this.retryTimer);
     clearTimeout(this.followTimer);
+    clearTimeout(this.overrideTimer);
   }
 
   showMessage(text) {
@@ -1653,6 +1987,7 @@ class Outline {
     const iconsReady = !!extra && this.applyIcons(roots, extra, doc);
     if (!iconsReady) this.applyRememberedIcons(roots);
     this.applyProblemIcons(roots, doc); // エラー・警告アイコン（0.4.0版）
+    this.applyOverrideIcons(roots); // 前に決めたオーバーライド・実装（0.5.0版）
     this.applyFieldTypes(roots);
     this.showFile(roots, uri, version);
     await this.fillJava(roots, uri, doc, generation, iconsReady, fieldsOf(roots), extra ? null : tokensQuery);
@@ -1909,6 +2244,8 @@ class Outline {
     this.rememberedUri = String(uri);
     this.fieldTypes = new Map();
     this.rowIcons = new Map();
+    this.overrides = new Map();
+    this.overrideFingerprint = null;
   }
 
   // セマンティックトークン（[凡例, トークン]）から修飾子を受け取れたら、行のアイコンの部品を付けて覚えておき、true を返す
@@ -1926,6 +2263,7 @@ class Outline {
   applyIconsLater(roots, extra, doc, generation) {
     if (generation !== this.generation || this.disposed || !this.applyIcons(roots, extra, doc)) return false;
     this.applyProblemIcons(roots, doc); // エラー・警告アイコン（0.4.0版）
+    this.applyOverrideIcons(roots); // 前に決めたオーバーライド・実装（0.5.0版）
     this.provider.changed.fire(); // 全部の行のアイコンが替わる
     this.changedAt = Date.now();
     return true;
@@ -1943,13 +2281,15 @@ class Outline {
   // Java のファイルの行に、フィールドの型を埋める。修飾子（アイコン）かフィールドの型が取れなかったときは、間をおいて、
   // 取れていないものだけを問い合わせ直す。jdt.ls の準備が終わる前に開いたファイルでは、シンボルは先に返るが、
   // セマンティックトークンとホバーはしばらく空で返り、返るようになっても拡張機能には知らせが来ないため（2026-10-12 に確かめた）
-  // lateTokens は、待たずに行を出したときの、まだ返っていないトークンの問い合わせ。返るのを、型の問い合わせと並べて待つ
-  async fillJava(roots, uri, doc, generation, iconsReady, fields, lateTokens = null) {
-    const [missing, ready] = await Promise.all([
-      this.fillFieldTypes(fields, uri, generation),
-      lateTokens ? lateTokens.then((extra) => this.applyIconsLater(roots, extra, doc, generation)) : iconsReady,
-    ]);
-    if (generation !== this.generation || this.disposed || (ready && missing.length === 0)) return;
+  // lateTokens は、待たずに行を出したときの、まだ返っていないトークンの問い合わせ。返るのを、型の問い合わせと並べて待つ。
+  // オーバーライド（0.5.0版）は、修飾子（private・static）が分かってから、フィールドの型の問い合わせのあとに問い合わせる（フィールドの型が
+  // 出るまでの時間を遅らせないため）。methods は、オーバーライドを問い合わせるメソッド。null は、アイコンが決まってから全部のメソッド
+  async fillJava(roots, uri, doc, generation, iconsReady, fields, lateTokens = null, methods = null) {
+    const types = this.fillFieldTypes(fields, uri, generation);
+    const icons = lateTokens ? lateTokens.then((extra) => this.applyIconsLater(roots, extra, doc, generation)) : iconsReady;
+    const overrides = Promise.resolve(icons).then((ok) => (ok ? this.fillOverrides(methods || this.overridesToAsk(roots, doc), uri, generation) : methods));
+    const [missing, ready, left] = await Promise.all([types, icons, overrides]);
+    if (generation !== this.generation || this.disposed || (ready && missing.length === 0 && left.length === 0)) return;
     this.retryTimer = setTimeout(async () => {
       let ok = ready;
       if (!ok) {
@@ -1957,7 +2297,7 @@ class Outline {
         if (generation !== this.generation || this.disposed) return;
         ok = this.applyIconsLater(roots, extra, doc, generation);
       }
-      await this.fillJava(roots, uri, doc, generation, ok, missing);
+      await this.fillJava(roots, uri, doc, generation, ok, missing, null, left);
     }, this.retryDelay(uri));
   }
 
@@ -1995,6 +2335,86 @@ class Outline {
     return missing;
   }
 
+  // --- オーバーライド（0.5.0版のチケット34） ---
+
+  // 行のアイコンの部品に、オーバーライド・実装（override）を付けるか外す。アイコンの部品は、覚えておいたもの（rowIcons）と共有しているので、
+  // 書き換えずに作り直す。替わったら true
+  setOverride(sym, kind) {
+    if (!sym.icon || (sym.icon.override || null) === kind) return false;
+    const { override: _, ...rest } = sym.icon;
+    sym.icon = kind ? { ...rest, override: kind } : rest;
+    return true;
+  }
+
+  // 前に同じファイルで決めたオーバーライド・実装を、行の id（名前と親の行）が同じメソッドに先に入れる（編集のたびにアイコンが消えて見えないように。
+  // フィールドの型と同じ）
+  applyOverrideIcons(roots) {
+    const walk = (list) => list.forEach((sym) => {
+      if (this.overrides.has(sym.id)) this.setOverride(sym, this.overrides.get(sym.id));
+      walk(sym.children);
+    });
+    walk(roots);
+  }
+
+  // 行を出したときに、オーバーライドを問い合わせるメソッド。オーバーライドの決まりに関わる中身が、前に決めたときと同じで、全部のメソッドの結果が
+  // 決まっていれば、問い合わせない（前に決めた結果は applyOverrideIcons で入れてある）。中身はここで覚え、問い合わせの結果を覚えるときに使う
+  overridesToAsk(roots, doc) {
+    const targets = overrideTargets(roots);
+    const fingerprint = overrideFingerprint(roots, doc);
+    if (fingerprint === this.overrideFingerprint && targets.every((sym) => this.overrides.has(sym.id))) return [];
+    this.overrideFingerprint = fingerprint;
+    return targets;
+  }
+
+  // メソッドのホバーを問い合わせて、オーバーライド・実装を決め、替わった行を VS Code に知らせる。問い合わせは全部のメソッドで同時に行う
+  // （プロトタイプでは、メソッド42個で0.1〜0.4秒、875個で1.7秒）。ホバーが空で返ったメソッド（jdt.ls の準備前）を返す
+  async fillOverrides(methods, uri, generation) {
+    const round = ++this.overrideRound;
+    const files = new ParentFiles();
+    const kinds = await Promise.all(methods.map(async (sym) => {
+      let hovers;
+      try {
+        hovers = await vscode.commands.executeCommand('vscode.executeHoverProvider', uri, sym.selectionRange.start);
+      } catch {
+        hovers = null;
+      }
+      if (!hovers || hovers.length === 0) return undefined;
+      try {
+        return await overrideKind(sym, uri, hovers, files);
+      } catch (e) {
+        console.error('[eclipse-like-outline]', e);
+        return null;
+      }
+    }));
+    if (generation !== this.generation || round !== this.overrideRound || this.disposed) return [];
+    const changed = [];
+    methods.forEach((sym, i) => {
+      if (kinds[i] === undefined) return;
+      this.overrides.set(sym.id, kinds[i]);
+      if (this.setOverride(sym, kinds[i])) changed.push(sym);
+    });
+    if (changed.length > 0) {
+      this.provider.changed.fire(changed); // 変わった行だけを VS Code に知らせる
+      this.changedAt = Date.now();
+    }
+    return methods.filter((_, i) => kinds[i] === undefined);
+  }
+
+  // ほかの Java のファイルが保存されたときと、ディスクの上で変わったとき（ほかのアプリや Git）に、表示中のファイルのオーバーライドを問い合わせ直す。
+  // Eclipse は、ビルドが終わるたびに付け直す（保存すると自動でビルドする）。拡張機能には、ほかのファイルの中身が変わった知らせが来ないため
+  onJavaFileChanged(uri) {
+    if (!this.showingTree || !this.uri || !uri.path.endsWith('.java') || String(uri) === String(this.uri)) return;
+    clearTimeout(this.overrideTimer);
+    this.overrideTimer = setTimeout(() => this.requeryOverrides(), OVERRIDE_REQUERY_DELAY);
+  }
+
+  async requeryOverrides() {
+    if (!this.showingTree || !this.view.visible || !this.uri || this.disposed) return;
+    const doc = docOf(this.uri);
+    if (!doc || doc.languageId !== 'java') return;
+    await this.fillOverrides(overrideTargets(this.provider.roots), this.uri, this.generation);
+  }
+
   // 「シンボルが見つかりません」の間、間をおいて取り直す
   retryLater(uri) {
     this.retryTimer = setTimeout(() => this.refresh(true), this.retryDelay(uri));
@@ -2021,6 +2441,7 @@ function activate(context) {
   const development = [vscode.ExtensionMode.Development, vscode.ExtensionMode.Test].includes(context.extensionMode);
   const outline = new Outline(view, provider, viewState, new EditDelay(development));
   const navigator = new Navigator();
+  const javaFiles = vscode.workspace.createFileSystemWatcher('**/*.java');
 
   context.subscriptions.push(
     // 「…」メニューの項目（「✓ なし」と「✓ 付き」の2つずつ）
@@ -2044,6 +2465,12 @@ function activate(context) {
     vscode.workspace.onDidCloseTextDocument((d) => outline.positions.forget(d)),
     vscode.extensions.onDidChange(() => wordPatterns.clear()),
     vscode.workspace.onDidChangeConfiguration((e) => outline.onConfigChanged(e)),
+    // オーバーライド（0.5.0版）：ほかの Java のファイルが保存されたときと、ディスクの上で変わったときに、問い合わせ直す
+    javaFiles,
+    vscode.workspace.onDidSaveTextDocument((d) => outline.onJavaFileChanged(d.uri)),
+    javaFiles.onDidChange((u) => outline.onJavaFileChanged(u)),
+    javaFiles.onDidCreate((u) => outline.onJavaFileChanged(u)),
+    javaFiles.onDidDelete((u) => outline.onJavaFileChanged(u)),
     view.onDidChangeVisibility(() => outline.onVisibilityChanged()),
     view.onDidExpandElement((e) => outline.onToggled(e.element, true)),
     view.onDidCollapseElement((e) => outline.onToggled(e.element, false)),
@@ -2073,4 +2500,5 @@ function deactivate() {}
 // activate と deactivate のほかは、ユニットテスト（公開しないファイル）から呼ぶために出している
 module.exports = { activate, deactivate, toSymbols, symbolAt, countRows, EditDelay, declarations, stripCode, javaIcon, addJavaIcons, iconSvg, iconUri, fieldType, OutlineProvider, Outline, Navigator, ViewState, MESSAGES, KIND_NAMES, LOADING_DELAY, EDIT_DELAY, EDIT_DELAY_MAX, EDIT_DELAY_DEFAULT, EDIT_DELAY_SAMPLES, EDIT_DELAY_FILES, JUMP_WAIT, JUMP_MIN_LINES, TOKENS_WAIT, RETRY_DELAY, RETRY_SLOW_DELAY, RETRY_FAST_PERIOD, OPEN_DELAY, DOUBLE_CLICK_TIME, KEY_WAIT, FOLLOW_DELAY, OPEN_STATES_SIZE,
   parseJsonc, wordPattern, wordPatterns, wordAt, markerRange, acceptEdit, ProblemPositions, assignProblems, problemDecoration, rowPlace, RowDecorations, eclipseProblem,
-  SEVERITY, MARKER_TAKE, DECORATION_EVENT_SIZE, DECORATION_WAIT, DECORATION_LIMIT, PROBLEM_DOT };
+  SEVERITY, MARKER_TAKE, DECORATION_EVENT_SIZE, DECORATION_WAIT, DECORATION_LIMIT, PROBLEM_DOT,
+  superLink, declText, abstractByText, signature, sameSignature, ParentFiles, linkedParentAbstract, findInHierarchy, overrideKind, overrideTargets, overrideFingerprint, OBJECT_METHODS, OVERRIDE_REQUERY_DELAY };
