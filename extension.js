@@ -119,10 +119,11 @@ function fromInternal(list) {
 
 // VS Code が返すシンボル（vscode.DocumentSymbol）を、ビューで使う形に直す。uri はシンボルのファイルの場所。
 // 名前が空のものや、名前の位置が範囲の外のものは、VS Code が拡張機能から受け取るときに捨てているので、ここでは調べない。
-// 行の id は「ファイルの場所|Outer/run()」の形。ファイルの場所は0.3.0版で入れた（中身が同じ別のファイルの行と、開閉状態を分けるため）
-function toSymbols(list, parent, uri = parent && parent.uri) {
+// 行の id は「ファイルの場所|Outer/run()」の形。ファイルの場所は0.3.0版で入れた（中身が同じ別のファイルの行と、開閉状態を分けるため）。
+// same は、範囲ごとの、それまでに出てきた行の数（ファイルの全部の行で数える。下の dup）
+function toSymbols(list, parent, uri, same = new Map()) {
   const seen = new Map();
-  const out = (list || []).map((x) => {
+  return (list || []).map((x) => {
     // 同じ名前の兄弟（匿名クラスなど）があっても id が重ならないよう、出てきた順の番号を付ける
     const n = seen.get(x.name) || 0;
     seen.set(x.name, n + 1);
@@ -138,18 +139,16 @@ function toSymbols(list, parent, uri = parent && parent.uri) {
       parent,
       children: [],
     };
-    sym.children = toSymbols(x.children, sym);
-    return sym;
-  });
-  // 範囲が同じ、前の兄弟の行の数（int a = x1, b = x2; の b は1）。行の場所を分けるのに使う（0.4.0版のチケット30）
-  const same = new Map();
-  out.forEach((sym) => {
-    const r = sym.range;
+    // 範囲が同じ、前に出てきた行の数（int a = x1, b = x2; の b は1）。行の場所を分けるのに使う（0.4.0版のチケット30）。
+    // 兄弟の行だけでなく、ファイルの全部の行で数える（1.0.0版のチケット37）。jdt.ls は、本体のある enum の定数（RED { ... }）の下に挟む {...} に、
+    // 定数と同じ範囲を返すので、親子で同じ場所になり、{...} の色とバッジが定数の行にも出ていた（2026-11-01 に、Checkstyle の違反で見つけた）
+    const r = x.range;
     const key = `${r.start.line},${r.start.character},${r.end.line},${r.end.character}`;
     sym.dup = same.get(key) || 0;
     same.set(key, sym.dup + 1);
+    sym.children = toSymbols(x.children, sym, uri, same);
+    return sym;
   });
-  return out;
 }
 
 // カーソルの位置 pos を含む、いちばん内側のシンボル（なければ null。0.3.0版）。VS Code 標準のアウトラインと同じく、範囲の端も含め、
@@ -223,6 +222,7 @@ function rowComparator(sortBy) {
 // --- Java のアイコンの決め方（0.2.0版） ---
 // Eclipse のアウトラインと同じ規則（Eclipse の JavaElementImageProvider と JdtFlags）で、行のアイコンの部品を決める。
 // 修飾子は jdt.ls のセマンティックトークンから受け取り、jdt.ls が返さない synchronized・transient・volatile・default はソースから見る。
+// jar の中のクラスファイル（jdt://）でトークンが返らないとき（逆コンパイルした中身）は、修飾子も宣言の文字から読む（1.0.0版のチケット38）。
 
 const SK = vscode.SymbolKind;
 const TYPE_KINDS = [SK.Class, SK.Interface, SK.Enum];
@@ -279,16 +279,20 @@ function stripCode(text) {
 // 単語として含まれるか（大文字と小文字を区別する。日本語の名前の一部は単語に数えない）
 const hasWord = (text, word) => new RegExp(`(?<![\\p{L}\\p{N}_$])${word}(?![\\p{L}\\p{N}_$])`, 'u').test(text);
 
+// 型のシンボルか。逆コンパイルした中身では、jdt.ls がアノテーション型の種類を Property で返すので、宣言の文字で見分けた印（annotationType）も見る
+const isTypeSym = (sym) => TYPE_KINDS.includes(sym.kind) || !!sym.annotationType;
+
 // いちばん近い外側の型のシンボル
 function declaringType(sym) {
   let p = sym.parent;
-  while (p && !TYPE_KINDS.includes(p.kind)) p = p.parent;
+  while (p && !isTypeSym(p)) p = p.parent;
   return p;
 }
 
 // 型の種類（class・interface・enum・annotation）。匿名クラスと、jdt.ls が enum の定数の下に挟む `{...}` は class
 function typeName(sym) {
   if (!sym) return null;
+  if (sym.annotationType) return 'annotation';
   if (!sym.token && sym.name.endsWith('{...}')) return 'class';
   if (sym.kind === SK.Interface) return sym.token && sym.token.type === 'decorator' ? 'annotation' : 'interface';
   return sym.kind === SK.Enum ? 'enum' : 'class';
@@ -305,7 +309,8 @@ const isMain = (s) => s.kind === SK.Method && /^main\(String(\[\]|\.\.\.)\)$/.te
 // corner：型アイコンの右下に付ける可視性。tr・br：右上・右下に重ねる修飾子アイコン（右から置く順）。deprecated：非推奨の斜線
 function javaIcon(sym, doc) {
   const mods = sym.mods;
-  const decl = declaringType(sym);
+  // 逆コンパイルした中身の入れ子の型は、いちばん上の段の行で返るので、範囲で決めた外側の型（outer）を使う
+  const decl = declaringType(sym) || sym.outer || null;
   const declName = typeName(decl);
   const inInterface = declName === 'interface' || declName === 'annotation';
   // 範囲の先頭から名前の直前まで（修飾子が書かれるところ）と、名前の後ろから範囲の終わりまで
@@ -314,13 +319,14 @@ function javaIcon(sym, doc) {
   const icon = { base: null, vis: null, corner: null, tr: [], br: [], deprecated: mods.has('deprecated') };
   if (sym.kind === SK.Package) {
     icon.base = 'package';
-  } else if (TYPE_KINDS.includes(sym.kind)) {
+  } else if (isTypeSym(sym)) {
     icon.base = typeName(sym);
     const vis = visibility(mods);
-    if (!sym.parent) icon.corner = vis ? null : 'package';
+    if (!decl) icon.corner = vis ? null : 'package';
     else icon.corner = vis === 'public' || inInterface ? null : vis || 'package';
     if (icon.base === 'class' && mods.has('abstract')) icon.tr.push('abstract');
     if (icon.base === 'class' && mods.has('readonly')) icon.tr.push('final');
+    if (sym.enumFlag) icon.tr.push(sym.enumFlag); // クラスファイルの enum の abstract か final（1.0.0版のチケット38）
     if (mods.has('static')) icon.tr.push('static');
     if (sym.children.some(isMain)) icon.br.push('run');
   } else if (sym.kind === SK.Method || sym.kind === SK.Constructor) {
@@ -365,28 +371,121 @@ function semanticTokens(uri) {
 
 // セマンティックトークンから修飾子を受け取れたら、シンボルに行のアイコンの部品を付けて true を返す。
 // jdt.ls の準備が終わる前は、トークンが返らないか、空で返る（宣言のトークンが1つもない）。そのときは何も付けずに false を返す
-// （修飾子なしとしてアイコンを決めると、間違ったアイコンになるため）。パッケージ宣言の行しかないファイルは、修飾子が要らないので true
+// （修飾子なしとしてアイコンを決めると、間違ったアイコンになるため）。パッケージ宣言の行しかないファイルは、修飾子が要らないので true。
+// jar の中のクラスファイル（jdt://）は、トークンが返らなければ、修飾子を宣言の文字から読んで true を返す（1.0.0版のチケット38）。
+// jdt.ls は、ソースのないクラスファイルを逆コンパイルした中身で開き、トークンを返さない（2026-11-01 にプロトタイプで確かめた）。
+// クラスファイルは jdt.ls の準備が終わってから開くので、トークンが空なのは、準備の途中だからではない。問い合わせ直しても返らない
 function applyJavaIcons(roots, legend, tokens, doc) {
   const decls = legend && tokens ? declarations(legend, tokens) : new Map();
-  if (decls.size === 0 && roots.some((sym) => sym.kind !== SK.Package)) return false;
-  addJavaIcons(roots, decls, doc);
+  const classFile = doc.uri.scheme === 'jdt';
+  if (decls.size === 0 && !classFile && roots.some((sym) => sym.kind !== SK.Package)) return false;
+  addJavaIcons(roots, decls, doc, classFile);
   return true;
 }
 
-// シンボルに、宣言のトークン（修飾子）と、行のアイコンの部品を付ける
-function addJavaIcons(roots, decls, doc) {
+// シンボルに、宣言のトークン（修飾子）と、行のアイコンの部品を付ける。classFile は jar の中のクラスファイル（jdt://）か
+function addJavaIcons(roots, decls, doc, classFile = false) {
+  const fromText = classFile && decls.size === 0;
+  if (classFile) markClassFileTypes(roots, doc);
   const walk = (list) => list.forEach((sym) => {
-    const t = decls.get(sym.selectionRange.start.line + ':' + sym.selectionRange.start.character);
-    sym.token = t && TOKEN_KINDS[t.type] && TOKEN_KINDS[t.type].includes(sym.kind) ? t : null;
-    sym.mods = sym.token ? sym.token.mods : new Set();
+    if (fromText) {
+      sym.token = null;
+      sym.mods = textModifiers(sym, doc);
+    } else {
+      const t = decls.get(sym.selectionRange.start.line + ':' + sym.selectionRange.start.character);
+      sym.token = t && TOKEN_KINDS[t.type] && TOKEN_KINDS[t.type].includes(sym.kind) ? t : null;
+      sym.mods = sym.token ? sym.token.mods : new Set();
+    }
+    const implicit = implicitModifiers(sym);
+    if (implicit) sym.mods = implicit;
     walk(sym.children);
   });
   const icons = (list) => list.forEach((sym) => {
+    if (classFile && typeName(sym) === 'enum' && isTypeSym(sym)) sym.enumFlag = classFileEnumFlag(sym, doc);
     sym.icon = javaIcon(sym, doc);
     icons(sym.children);
   });
   walk(roots);
-  icons(roots); // main メソッドを見るために、子の修飾子を付け終えてから決める
+  icons(roots); // main メソッドと enum の abstract のメソッドを見るために、子の修飾子を付け終えてから決める
+}
+
+// --- jar の中のクラスファイル（1.0.0版のチケット36・38） ---
+// Eclipse は、クラスファイルの行を、javac がクラスファイルに書いた修飾子で出す（JavaElementImageProvider.computeJavaAdornmentFlags は
+// member.getFlags() を使う）。jdt.ls は、ソースを付けた jar のクラスはソースの範囲で、ソースのないクラスは逆コンパイルした中身（FernFlower）の範囲で行を返す
+
+// 逆コンパイルした中身の型の行に、印を付ける。入れ子の型は、外側の型の子ではなく、いちばん上の段の行で返るので、範囲を含む、いちばん狭い型を外側の型（outer）にする。
+// アノテーション型は、種類が Property で返るので、宣言に @interface と書かれた行に annotationType を付ける（行の並びと種類は、VS Code 標準のアウトラインと同じに保つ）
+function markClassFileTypes(roots, doc) {
+  const walk = (list) => list.forEach((sym) => {
+    const head = doc.getText(new vscode.Range(sym.range.start, sym.selectionRange.start)).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ' ');
+    if (sym.kind === SK.Property && /@\s*interface\s*$/.test(head)) sym.annotationType = true;
+    walk(sym.children);
+  });
+  walk(roots);
+  const types = roots.filter(isTypeSym);
+  types.forEach((sym) => {
+    const outers = types.filter((t) => t !== sym && t.range.contains(sym.range) && !t.range.isEqual(sym.range));
+    sym.outer = outers.find((t) => !outers.some((o) => o !== t && t.range.contains(o.range))); // いちばん狭いもの（ほかの外側の型を含まないもの）
+  });
+}
+
+// 宣言の文字（範囲の先頭から名前の前まで）から読む修飾子。トークンの修飾子と同じ形にする（final は readonly、非推奨は deprecated）。
+// 書かれない修飾子は、Java の決まりと Eclipse の JdtFlags で足す：インターフェイスとアノテーション型の中のメソッドは、中身がなければ abstract
+// （アノテーション型の要素は、どれも abstract）。入れ子のインターフェイス・アノテーション型・enum と、インターフェイスの中の型は static。
+// 非推奨：逆コンパイルした中身には、Javadoc の @deprecated も @Deprecated も「/** @deprecated */」と書かれる（@Deprecated も残る）。
+// Eclipse は、クラスファイルの非推奨の印（javac はどちらでも付ける）で斜線を出す
+function textModifiers(sym, doc) {
+  const raw = doc.getText(new vscode.Range(sym.range.start, sym.selectionRange.start));
+  const words = stripCode(raw);
+  const mods = new Set(['public', 'protected', 'private', 'abstract', 'static', 'native'].filter((w) => hasWord(words, w)));
+  if (hasWord(words, 'final')) mods.add('readonly');
+  const noComment = raw.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\\n])*"/g, ' ');
+  // Javadoc のタグは、行の頭（* の後ろ）に書いたときだけ数える（文の途中の @deprecated はタグではない）
+  const javadocTag = [...raw.matchAll(/\/\*\*([\s\S]*?)\*\//g)].some((m) => m[1].split('\n').some((l) => /^\s*\*?\s*@deprecated\b/.test(l)));
+  if (javadocTag || /@\s*(java\.lang\.)?Deprecated\b/.test(noComment)) mods.add('deprecated');
+  const decl = declaringType(sym) || sym.outer || null;
+  const declName = typeName(decl);
+  if (sym.kind === SK.Method && declName === 'annotation') mods.add('abstract');
+  else if (sym.kind === SK.Method && declName === 'interface' && abstractByText(declText(doc, sym.selectionRange.start, sym.range.start))) mods.add('abstract');
+  if (isTypeSym(sym) && decl && (declName === 'interface' || declName === 'annotation' || ['interface', 'annotation', 'enum'].includes(typeName(sym)))) mods.add('static');
+  return mods;
+}
+
+// javac が作るメンバー（デフォルトコンストラクター、enum の values()・valueOf(String)）と、jdt.ls がソースと結び付けなかった enum のコンストラクターの修飾子。
+// jdt.ls は、これらの行の名前の位置に、外側の型の名前の位置を返すので、そのままでは型のトークンの修飾子（abstract など）を受け取る（1.0.0版のチケット36）。
+// javac が書くとおり、コンストラクターは型と同じ可視性（enum は private）、values()・valueOf(String) は public static にする。当てはまらなければ null。
+// ソースのファイルでは、jdt.ls はこれらの行を返さず、書いたメンバーの名前の位置は型の名前の位置と違うので、当てはまらない
+function implicitModifiers(sym) {
+  if (sym.kind !== SK.Constructor && sym.kind !== SK.Method) return null;
+  const type = declaringType(sym);
+  if (!type || !type.selectionRange.start.isEqual(sym.selectionRange.start)) return null;
+  if (sym.kind === SK.Constructor) {
+    const vis = typeName(type) === 'enum' ? 'private' : visibility(type.mods);
+    return new Set(vis ? [vis] : []);
+  }
+  return new Set(['public', 'static']); // 型の名前の位置に出るメソッドは、javac が enum に作る values()・valueOf(String) だけ
+}
+
+// クラスファイルの enum の修飾子アイコン：javac は、abstract のメソッドがある enum に abstract を、本体のある定数がない enum に final を付ける
+// （2026-11-01 に javap で確かめた）。逆コンパイルした中身には定数の本体が書かれないので、本体のある定数がある enum でも final になる
+// （拡張機能からは見分けられない。本体のない enum のほうが多いので、付けないより Eclipse と同じになる行が多い。2026-11-01 に Claude が決めた）。
+// インターフェイスのメソッドを定数の本体だけで実装する enum（javac は abstract を付ける）は見分けない
+function classFileEnumFlag(sym, doc) {
+  if (sym.children.some((c) => c.kind === SK.Method && c.mods && c.mods.has('abstract'))) return 'abstract';
+  const text = doc.getText();
+  const body = (c) => {
+    let i = doc.offsetAt(c.selectionRange.end);
+    while (i < text.length && /\s/.test(text[i])) i++;
+    if (text[i] === '(') {
+      for (let depth = 0; i < text.length; i++) {
+        if (text[i] === '(') depth++;
+        else if (text[i] === ')' && --depth === 0) { i++; break; }
+      }
+      while (i < text.length && /\s/.test(text[i])) i++;
+    }
+    return text[i] === '{';
+  };
+  return sym.children.some((c) => c.kind === SK.EnumMember && body(c)) ? null : 'final';
 }
 
 // --- Java のアイコンの図（0.2.0版） ---
@@ -740,7 +839,9 @@ function findType(symbols, path) {
   let list = symbols;
   let found = null;
   for (const name of path) {
-    found = list.find((x) => TYPE_KINDS.includes(x.kind) && x.name.replace(/<.*$/, '') === name);
+    const match = (x) => TYPE_KINDS.includes(x.kind) && x.name.replace(/<.*$/, '') === name;
+    // 逆コンパイルした中身では、入れ子の型が外側の型の子ではなく、いちばん上の段の行で返るので、子に見つからなければ、いちばん上の段も探す（1.0.0版のチケット38）
+    found = list.find(match) || (found && symbols.find(match));
     if (!found) return null;
     list = found.children || [];
   }
@@ -839,10 +940,81 @@ async function findInHierarchy(uri, sym, type, anonymous, files) {
   const items = (await vscode.commands.executeCommand('vscode.prepareTypeHierarchy', uri, type.selectionRange.start)) || [];
   if (!items.length) return null;
   const visited = new Set();
+  // jar の中のクラスファイルの入れ子の型では、型の階層の問い合わせが、外側の型を返す（1.0.0版のチケット38。逆コンパイルした中身で、2026-11-01 に見つけた）。
+  // そのときは、宣言に書かれた親の型の名前から探す
+  if (!anonymous && plainName(items[0].name) !== plainName(type.name)) return findInDeclared(uri, type, ours, visited, files);
   if (!anonymous) return findInSupertypes(items[0], ours, visited, files);
   // 匿名クラスでは、型の階層は new の後ろに書いた型を返す。それがインターフェイスなら、親のクラスは Object なので、先に Object と比べる
   if (items[0].kind === SK.Interface && OBJECT_METHODS.some((m) => sameSignature(ours, signature(m), []))) return false;
   return findInType(items[0], ours, visited, files);
+}
+
+// 型の名前から、型引数を除いたもの
+const plainName = (name) => name.replace(/<.*$/, '');
+
+// 型の宣言（範囲の始まりから最初の { まで）の extends と implements に書かれた型の名前（型引数を除く。パッケージ名を付けて書いたものは、そのまま）
+function declaredParents(doc, type) {
+  const decl = stripCode(declText(doc, type.selectionRange.start, type.range.start) || '');
+  const m = /\b(?:extends|implements)\b([\s\S]*?)\{?$/.exec(decl);
+  if (!m) return [];
+  let depth = 0;
+  let cur = '';
+  const out = [];
+  for (const ch of m[1].replace(/\b(?:extends|implements)\b/g, ',')) {
+    if (ch === '<') depth++;
+    else if (ch === '>') depth--;
+    else if (ch === ',' && depth === 0) { out.push(cur); cur = ''; }
+    else if (depth === 0) cur += ch;
+  }
+  out.push(cur);
+  return out.map((x) => x.trim()).filter(Boolean);
+}
+
+// 宣言に書かれた親の型から、ours と同じメソッドを探す（型の階層の問い合わせが使えない、クラスファイルの入れ子の型のため）。
+// 同じファイルの型（逆コンパイルした中身では、入れ子の型もいちばん上の段の行で返る）は、そのメソッドと、さらに宣言に書かれた親を見る。
+// ほかのファイルの型は、場所を探して、型の階層の問い合わせで続ける。見つかれば abstract か、なければ null
+async function findInDeclared(uri, type, ours, visited, files) {
+  const { doc, symbols } = await files.get(uri);
+  for (const name of declaredParents(doc, type)) {
+    const simple = name.replace(/^.*\./, '');
+    let local = null;
+    const walk = (list) => list.forEach((x) => {
+      if (!local && TYPE_KINDS.includes(x.kind) && plainName(x.name) === simple) local = x;
+      walk(x.children || []);
+    });
+    walk(symbols);
+    let found = null;
+    if (local) {
+      const key = `${uri}#${simple}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
+      found = methodIn(doc, local, ours);
+      if (found === null) found = await findInDeclared(uri, local, ours, visited, files);
+    } else {
+      const item = await hierarchyItemOf(doc, name);
+      if (item) found = await findInType(item, ours, visited, files);
+    }
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+// ファイル doc の中で名前 name で書かれた、ほかのファイルの型の、型の階層の項目（なければ null）。パッケージは、パッケージ名を付けて書いたものはそれ、
+// 次に import の行、同じパッケージ、java.lang の順に探す。場所は、ワークスペースのシンボル（jar と JDK の型も返る）で探す
+async function hierarchyItemOf(doc, name) {
+  const simple = name.replace(/^.*\./, '');
+  const text = doc.getText();
+  const imported = new RegExp(`^\\s*import\\s+([\\w.]+)\\.${simple.replace(/\$/g, '\\$')}\\s*;`, 'm').exec(text);
+  const own = /^\s*package\s+([\w.]+)\s*;/m.exec(text);
+  const packages = name.includes('.') ? [name.slice(0, name.lastIndexOf('.'))] : [imported && imported[1], own ? own[1] : '', 'java.lang'].filter((x) => x !== null);
+  const list = (await vscode.commands.executeCommand('vscode.executeWorkspaceSymbolProvider', simple)) || [];
+  for (const pkg of packages) {
+    const hit = list.find((x) => x.name === simple && (x.containerName || '') === pkg);
+    if (!hit) continue;
+    const items = (await vscode.commands.executeCommand('vscode.prepareTypeHierarchy', hit.location.uri, hit.location.range.start)) || [];
+    return items[0] || null;
+  }
+  return null;
 }
 
 // メソッド sym のホバー hovers から、オーバーライドアイコン・実装アイコンのどちらを付けるかを決める：'override'・'implement'・null（付けない）
