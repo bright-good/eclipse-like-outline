@@ -1,13 +1,10 @@
 # アウトライン (Eclipse)
 
+> 導入でコピペする用の説明です。画面の例とアイコンの図は、GitHub のページ（https://github.com/bright-good/eclipse-like-outline）にあります。
+
 VS Code で Java を書くときに、クラスの中のフィールドやメソッドを、Eclipse のアウトラインと同じアイコンで一覧できる拡張機能です。
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="READMEの図/比較画面-ダーク.png">
-  <img src="READMEの図/比較画面-ライト.png" width="451" alt="同じ Java のファイルを、左は VS Code 標準のアウトライン、右はアウトライン (Eclipse) で出した画面">
-</picture>
-
-上の図は、同じ Java のファイルを、左は VS Code 標準のアウトライン、右はこの拡張機能のビュー「アウトライン (Eclipse)」で出したものです。VS Code 標準のアウトラインは、メソッドならどれも同じアイコンで出すので、public か private か、static か、親の型のメソッドをオーバーライドしているかを、アイコンでは見分けられません。アウトライン (Eclipse) は、これらを Eclipse と同じアイコンで出し分けます。フィールドの名前の後ろには、型も出します。
+VS Code 標準のアウトラインは、メソッドならどれも同じアイコンで出すので、public か private か、static か、親の型のメソッドをオーバーライドしているかを、アイコンでは見分けられません。この拡張機能のビュー「アウトライン (Eclipse)」は、これらを Eclipse と同じアイコンで出し分けます。フィールドの名前の後ろには、型も出します。
 
 ## できること
 
@@ -23,41 +20,41 @@ VS Code で Java を書くときに、クラスの中のフィールドやメソ
 
 ### 可視性アイコン（メソッドとフィールド）
 
-左がメソッド、右がフィールドの図です。
+- 緑の丸：public
+- 黄のひし形：protected
+- 青の三角：書いていない（package）
+- 赤の四角：private
 
-- <img src="READMEの図/アイコン/publicのメソッド.svg" width="32" align="absmiddle" alt="緑の丸"> <img src="READMEの図/アイコン/publicのフィールド.svg" width="32" align="absmiddle" alt="小さな緑の丸"> public
-- <img src="READMEの図/アイコン/protectedのメソッド.svg" width="32" align="absmiddle" alt="黄のひし形"> <img src="READMEの図/アイコン/protectedのフィールド.svg" width="32" align="absmiddle" alt="小さな黄のひし形"> protected
-- <img src="READMEの図/アイコン/packageのメソッド.svg" width="32" align="absmiddle" alt="青の三角"> <img src="READMEの図/アイコン/packageのフィールド.svg" width="32" align="absmiddle" alt="小さな青の三角"> 書いていない（package）
-- <img src="READMEの図/アイコン/privateのメソッド.svg" width="32" align="absmiddle" alt="赤の四角"> <img src="READMEの図/アイコン/privateのフィールド.svg" width="32" align="absmiddle" alt="小さな赤の四角"> private
+フィールドは、同じ形を小さくして、中を抜いたものです。
 
 ### 型アイコン
 
-- <img src="READMEの図/アイコン/クラス.svg" width="32" align="absmiddle" alt="緑の丸に白い C"> クラス
-- <img src="READMEの図/アイコン/インターフェイス.svg" width="32" align="absmiddle" alt="紫の丸に白い I"> インターフェイス
-- <img src="READMEの図/アイコン/enum.svg" width="32" align="absmiddle" alt="茶の丸に白い E"> enum
-- <img src="READMEの図/アイコン/アノテーション型.svg" width="32" align="absmiddle" alt="青い @"> アノテーション型
-- <img src="READMEの図/アイコン/パッケージ宣言.svg" width="32" align="absmiddle" alt="箱に十字のひも"> パッケージ宣言
+- 緑の丸に白い C：クラス
+- 紫の丸に白い I：インターフェイス
+- 茶の丸に白い E：enum
+- 青い @：アノテーション型
+- 箱に十字のひも：パッケージ宣言
 
 public でない型は、型アイコンの右下に、可視性を小さく付けます（形と色は、可視性アイコンと同じです）。
 
 ### 重ねるアイコン
 
-- <img src="READMEの図/アイコン/abstract.svg" width="32" align="absmiddle" alt="右上に緑の A"> abstract
-- <img src="READMEの図/アイコン/コンストラクター.svg" width="32" align="absmiddle" alt="右上に緑の C"> コンストラクター
-- <img src="READMEの図/アイコン/final.svg" width="32" align="absmiddle" alt="右上に青の F"> final
-- <img src="READMEの図/アイコン/volatile.svg" width="32" align="absmiddle" alt="右上に赤の V"> volatile
-- <img src="READMEの図/アイコン/static.svg" width="32" align="absmiddle" alt="右上に赤の S"> static
-- <img src="READMEの図/アイコン/native.svg" width="32" align="absmiddle" alt="右上に青の N"> native
-- <img src="READMEの図/アイコン/default.svg" width="32" align="absmiddle" alt="右上に茶の D"> default メソッド、既定値のあるアノテーションの要素
-- <img src="READMEの図/アイコン/synchronized.svg" width="32" align="absmiddle" alt="右下に青い時計"> synchronized
-- <img src="READMEの図/アイコン/transient.svg" width="32" align="absmiddle" alt="右下に紫の T"> transient
-- <img src="READMEの図/アイコン/mainメソッドを持つクラス.svg" width="32" align="absmiddle" alt="右下に緑の三角"> main メソッドを持つ型
-- <img src="READMEの図/アイコン/オーバーライド.svg" width="32" align="absmiddle" alt="右下に、紫の縁で中が緑の三角"> オーバーライド（親の型の、中身のあるメソッドを書き換えている）
-- <img src="READMEの図/アイコン/実装.svg" width="32" align="absmiddle" alt="右下に、紫の縁で中を抜いた三角"> 実装（親の型の abstract なメソッドに、中身を与えている）
-- <img src="READMEの図/アイコン/非推奨.svg" width="32" align="absmiddle" alt="後ろに灰色の斜線"> 非推奨（`@Deprecated`、Javadoc の `@deprecated`）。名前に取り消し線は引きません
-- <img src="READMEの図/アイコン/エラー.svg" width="32" align="absmiddle" alt="左下に赤い四角と白い ×"> エラーがある
-- <img src="READMEの図/アイコン/警告.svg" width="32" align="absmiddle" alt="左下に黄色い三角と !"> 警告がある
-- <img src="READMEの図/アイコン/情報.svg" width="32" align="absmiddle" alt="左下に青い i"> 情報がある
+- 右上に緑の A：abstract
+- 右上に緑の C：コンストラクター
+- 右上に青の F：final
+- 右上に赤の V：volatile
+- 右上に赤の S：static
+- 右上に青の N：native
+- 右上に茶の D：default メソッド、既定値のあるアノテーションの要素
+- 右下に青い時計：synchronized
+- 右下に紫の T：transient
+- 右下に緑の三角：main メソッドを持つ型
+- 右下に、紫の縁で中が緑の三角：オーバーライド（親の型の、中身のあるメソッドを書き換えている）
+- 右下に、紫の縁で中を抜いた三角：実装（親の型の abstract なメソッドに、中身を与えている）
+- 後ろに灰色の斜線：非推奨（`@Deprecated`、Javadoc の `@deprecated`）。名前に取り消し線は引きません
+- 左下に赤い四角と白い ×：エラーがある
+- 左下に黄色い三角と !：警告がある
+- 左下に青い i：情報がある
 
 付け方は、Eclipse と同じです。
 
@@ -74,7 +71,7 @@ public でない型は、型アイコンの右下に、可視性を小さく付�
 
 Marketplace には出していないので、ファイルを置いて入れます。
 
-1. 適当なフォルダー（例：`eclipse-like-outline`）を作り、このリポジトリの次の3つのファイルを同じ名前で置きます。中身はコピペで構いません
+1. 適当なフォルダー（例：`eclipse-like-outline`）を作り、このリポジトリの直下にある次の3つのファイルを同じ名前で置きます。中身はコピペで構いません（`README.md` は、図を入れていない、コピペ用の説明です）
    - `extension.js`
    - `package.json`
    - `README.md`
